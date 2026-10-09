@@ -5,6 +5,9 @@ import PackageDescription
 
 let package = Package(
     name: "FoundationModelsHarness",
+    platforms: [
+        .iOS("27.2"), .macOS("27.2"), .visionOS("27.2"), .watchOS("27.2"),
+    ],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
@@ -20,6 +23,13 @@ let package = Package(
             swiftSettings: [
                 .enableUpcomingFeature("ApproachableConcurrency"),
             ],
+        ),
+        .executableTarget(
+            name: "Examples",
+            dependencies: [
+                "FoundationModelsHarness"
+            ],
+            path: "Examples"
         ),
         .testTarget(
             name: "FoundationModelsHarnessTests",
