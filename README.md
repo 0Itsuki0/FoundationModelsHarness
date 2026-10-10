@@ -1,8 +1,11 @@
-#  (WIP) Foundation Models Harness
+# (WIP) Foundation Models Harness
+
+### Current Progress
+
+
+### Brain storming:
 
 Dynamic profile: https://developer.apple.com/documentation/foundationmodels/composing-dynamic-sessions-with-instructions-and-profiles
-
-Brain storming:
 
 - Tools
     - vendored tools: 
@@ -83,7 +86,7 @@ Brain storming:
 - plugin
 - multi-agent:
     - a2a: https://strandsagents.com/docs/user-guide/sdk/multi-agent/agent-to-agent/
-    - agent as tool: https://strandsagents.com/docs/user-guide/sdk/multi-agent/agents-as-tools/
+    - agent as tool: https://strandsagents.com/docs/user-guide/sdk/multi-agent/agents-as-tools/. https://github.com/0Itsuki0/SwiftFoundationModels_AgentAsTool/blob/main/AgentAsTool.swift
     - swarm: https://strandsagents.com/docs/user-guide/sdk/multi-agent/swarm/
     - graph: https://strandsagents.com/docs/user-guide/sdk/multi-agent/graph/
     - workflow: https://strandsagents.com/docs/user-guide/sdk/multi-agent/workflow/
