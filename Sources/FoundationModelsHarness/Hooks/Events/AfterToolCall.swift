@@ -22,6 +22,7 @@ public struct AfterToolCallEventHandler: HookEventHandler {
 
     static public let eventType: HookEventType = .afterToolCall
 
+    /// the error thrown will be propagated up directly to the `respond` or `streamResponse`.
     public let callback: @Sendable (inout EventPayload) async throws -> Void
     public let options: HookCallbackOptions?
 

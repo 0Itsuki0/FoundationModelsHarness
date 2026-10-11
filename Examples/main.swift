@@ -11,7 +11,7 @@ import SwiftUI
 
 do {
     let agent = Agent(
-        tools: [.init(tool: GreetingTool(), delegate: false)],
+        tools: [.init(tool: GreetingTool(), delegate: true)],
         instruction: .init("You are a helpful assistant.")
     )
     agent.addHook(
@@ -19,6 +19,7 @@ do {
             event.agent.agentState["123"] = "123"
             event.agent.invocationState["123"] = "test"
             event.toolCall.arguments = try .init(json: "{\"name\": \"⭐⭐user⭐⭐\"}")
+            print("before tool call finish")
         })
     )
 
@@ -26,6 +27,11 @@ do {
     print("response: ", response)
     print("current transcript history")
     printHistory(agent.transcript.history)
+//    try await printStream(agent.streamResponse(to: "greet itsuki"))
+//    try await printStream(agent.streamResponse(to: "who did you greet?"))
+//
+//    print("current transcript history")
+//    printHistory(agent.transcript.history)
 
     //
     //    //    try await testRespond(agent)

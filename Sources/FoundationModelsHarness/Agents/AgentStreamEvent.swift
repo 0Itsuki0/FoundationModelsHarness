@@ -30,7 +30,7 @@ public enum AgentStreamEvent: Sendable {
         case .contentUpdate(let rawContent, _):
             rawContent.jsonString
         case .delegatedToolOutput(let output):
-            output.segments.text
+            output.segments.rawContent
         }
     }
 }

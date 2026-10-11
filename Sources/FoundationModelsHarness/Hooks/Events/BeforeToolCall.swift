@@ -12,14 +12,20 @@ import FoundationModels
 ///
 /// Hook callbacks can:
 /// - Set `cancel` to prevent the tool from executing.
-/// - Mutate `toolUse` in place, or replace it wholesale, to rewrite the tool
+/// - Mutate `toolCall` in place, or replace it wholesale, to rewrite the tool
 ///   input or name before execution.
 ///   The `name` has to be one of the registered tools. If it  is changed, a different tool will be called.
 public struct BeforeToolCallEventHandler: HookEventHandler {
     public let id = HookID()
 
     public struct EventPayload: Sendable {
+        /// The tool call that triggers the event
         public var toolCall: Transcript.ToolCall
+        
+        /// All tools being called right now including the one triggers the event
+        public let toolCalls: [Transcript.ToolCall]
+
+        /// LocalAgent.History contains transcript history up to (not including) the last tool calls
         public let agent: LocalAgent
 
         // TODO: add hook cancellation. (cancel with a message that will be send back to the model)
@@ -28,6 +34,7 @@ public struct BeforeToolCallEventHandler: HookEventHandler {
 
     static public let eventType: HookEventType = .beforeToolCall
 
+    /// the error thrown will be propagated up directly to the `respond` or `streamResponse`.
     public let callback: @Sendable (inout EventPayload) async throws -> Void
     public let options: HookCallbackOptions?
 

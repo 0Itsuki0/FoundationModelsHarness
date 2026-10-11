@@ -8,23 +8,21 @@
 import FoundationModels
 import FoundationModelsHarness
 
-
 struct GreetingTool: Tool {
     let name = "greet"
     let description = "greet a name."
-        
+
     @Generable
     struct Arguments {
         @Guide(description: "The name to greet")
         var name: String
     }
-    
+
     func call(arguments: Arguments) async throws -> String {
         print("Tool[\(name)] called with arguments: \(arguments)")
         return "Hello \(arguments.name)"
     }
 }
-
 
 func printStream(_ stream: AsyncThrowingStream<AgentStreamEvent, Error>)
     async throws
@@ -37,7 +35,7 @@ func printStream(_ stream: AsyncThrowingStream<AgentStreamEvent, Error>)
             print(content.dropFirst(printed.count), terminator: "")
             printed = content
         case .delegatedToolOutput(let output):
-            print("tool output: ", output.segments.text)
+            print("delegatedToolOutput: ", output.description)
         }
     }
     print()

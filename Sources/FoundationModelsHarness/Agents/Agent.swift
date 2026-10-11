@@ -100,23 +100,22 @@ public final class Agent: Sendable {
             )
         )
     }
-    
+
     public func addHook(_ hook: any HookEventHandler) {
         self.hookRegistry.addHook(hook)
     }
-    
+
     public func removeHook(_ id: HookID) {
         self.hookRegistry.removeHook(id)
     }
-    
+
     public func removeHooks(for types: Set<HookEventType>) {
         self.hookRegistry.removeHooks(for: types)
     }
-    
+
     public func removeAllHooks() {
         self.hookRegistry.removeAllHooks()
     }
-
 
     private func resetInvocationState() {
         self.invocationState = .init()
@@ -129,6 +128,7 @@ public final class Agent: Sendable {
         to prompt: String,
         options: GenerationOptions = GenerationOptions()
     ) async throws -> AgentResult {
+        self.invocationState.clearRetry()
 
         defer {
             self.resetInvocationState()
@@ -145,7 +145,7 @@ public final class Agent: Sendable {
                 invocationState: invocationState
             )
         } catch {
-            if let error = error as? DelegatedToolError {
+            if let error = error.delegatedError {
                 let response = addDelegatedToolOutput(error.toolOutput)
                 return AgentResult(
                     stopReason: .delegatedToolOutput,
@@ -154,8 +154,21 @@ public final class Agent: Sendable {
                 )
             }
 
+            if error.isRetryError {
+                return try await retry(options: options)
+            }
+
             throw error
         }
+    }
+
+    private func retry(options: GenerationOptions) async throws -> AgentResult {
+        print(#function)
+        invocationState.setRetry()
+        defer {
+            invocationState.clearRetry()
+        }
+        return try await self.respond(to: "", options: options)
     }
 
     public func streamResponse(
@@ -164,38 +177,85 @@ public final class Agent: Sendable {
     ) -> AsyncThrowingStream<AgentStreamEvent, Error> {
 
         return AsyncThrowingStream<AgentStreamEvent, Error> { continuation in
+
             Task { [session, resetInvocationState] in
-                defer {
-                    resetInvocationState()
-                }
-
-                do {
-                    for try await snapshot in session.streamResponse(to: prompt)
-                    {
-                        continuation.yield(
-                            .contentUpdate(
-                                rawContent: snapshot.rawContent,
-                                usage: snapshot.usage
-                            )
-                        )
-                    }
-                    continuation.finish()
-                    return
-
-                } catch {
-                    if let error = error as? DelegatedToolError {
-                        addDelegatedToolOutput(error.toolOutput)
-                        continuation.yield(
-                            .delegatedToolOutput(error.toolOutput)
-                        )
-                        continuation.finish()
-                        return
-                    }
-
-                    continuation.finish(throwing: error)
-                }
+                await streamHelper(
+                    prompt: prompt,
+                    session: session,
+                    resetInvocationState: resetInvocationState,
+                    streamingInto: continuation
+                )
             }
         }
+    }
+
+    private func retryStream(
+        options: GenerationOptions,
+        session: LanguageModelSession,
+        resetInvocationState: () -> Void,
+        streamingInto continuation: AsyncThrowingStream<AgentStreamEvent, Error>
+            .Continuation
+    ) async {
+        print(#function)
+        invocationState.setRetry()
+        defer {
+            invocationState.clearRetry()
+        }
+        await self.streamHelper(
+            prompt: "",
+            options: options,
+            session: session,
+            resetInvocationState: resetInvocationState,
+            streamingInto: continuation
+        )
+    }
+
+    private func streamHelper(
+        prompt: String,
+        options: GenerationOptions = GenerationOptions(),
+        session: LanguageModelSession,
+        resetInvocationState: () -> Void,
+        streamingInto continuation: AsyncThrowingStream<AgentStreamEvent, Error>
+            .Continuation
+    ) async {
+        defer {
+            resetInvocationState()
+        }
+
+        do {
+            for try await snapshot in session.streamResponse(to: prompt) {
+                continuation.yield(
+                    .contentUpdate(
+                        rawContent: snapshot.rawContent,
+                        usage: snapshot.usage
+                    )
+                )
+            }
+            continuation.finish()
+            return
+
+        } catch {
+            if let error = error.delegatedError {
+                addDelegatedToolOutput(error.toolOutput)
+                continuation.yield(
+                    .delegatedToolOutput(error.toolOutput)
+                )
+                continuation.finish()
+                return
+            }
+
+            if error.isRetryError {
+                await retryStream(
+                    options: options,
+                    session: session,
+                    resetInvocationState: resetInvocationState,
+                    streamingInto: continuation
+                )
+            }
+
+            continuation.finish(throwing: error)
+        }
+
     }
 
     @discardableResult
@@ -223,7 +283,15 @@ extension Transcript.Entry {
         }
         return nil
     }
+
+    var asToolCalls: Transcript.ToolCalls? {
+        if case .toolCalls(let calls) = self {
+            return calls
+        }
+        return nil
+    }
 }
+
 extension LanguageModelSession {
     var lastResponse: Transcript.Response? {
         self.transcript.history.compactMap {
@@ -233,7 +301,7 @@ extension LanguageModelSession {
 }
 
 extension Array where Element == Transcript.Segment {
-    var text: String {
+    var rawContent: String {
         return self.compactMap { segment -> String? in
             switch segment {
             case .text(let text):
@@ -246,5 +314,30 @@ extension Array where Element == Transcript.Segment {
                 nil
             }
         }.joined(separator: "\n")
+    }
+}
+
+extension Error {
+    var isRetryError: Bool {
+        return self.isError(RetryError.self)
+    }
+
+    var delegatedError: DelegatedToolError? {
+        return self.error(DelegatedToolError.self)
+    }
+
+    func isError<T: Error>(_ type: T.Type) -> Bool {
+        return self.error(type) != nil
+    }
+
+    func error<T: Error>(_ type: T.Type) -> T? {
+        if let error = self as? T {
+            return error
+        }
+
+        if let error = self as? LanguageModelSession.ToolCallError {
+            return error.underlyingError.error(type)
+        }
+        return nil
     }
 }
