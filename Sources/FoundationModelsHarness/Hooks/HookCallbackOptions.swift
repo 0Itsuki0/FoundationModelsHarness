@@ -14,6 +14,10 @@ public struct HookCallbackOptions: Sendable, Hashable, Equatable {
     /// These are not enforced bounds: any numeric value works.
     /// Use values beyond them (e.g. `BuiltInHookOrder.sdkFirst` - 1) to run before or after the SDK’s hooks, or -Infinity/Infinity for guaranteed absolute ordering.
     public let order: Int?
+    
+    public init(order: Int?) {
+        self.order = order
+    }
 }
 
 /// Presets for hook execution order. Lower values run first.

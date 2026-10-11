@@ -9,68 +9,69 @@ import FoundationModels
 import FoundationModelsHarness
 import SwiftUI
 
-struct GreetingTool: Tool {
-    let name = "greet"
-    let description = "greet a name."
-
-    @SessionProperty(\.agentState)
-    var appState
-
-    @SessionProperty(\.invocationState)
-    var invocationState
-
-    @SessionProperty(\.history)
-    var history
-
-    @Generable
-    struct Arguments {
-        @Guide(description: "The name to greet")
-        var name: String
-    }
-
-    func call(arguments: Arguments) async throws -> String {
-        print("tool call function")
-        return "Hello \(arguments.name)"
-    }
-}
-
-func testStream(_ agent: Agent) async throws {
-    try await printStream(agent.streamResponse(to: "greet itsuki"))
-    try await printStream(agent.streamResponse(to: "who did you greet?"))
-}
-
-func printStream(_ stream: AsyncThrowingStream<AgentStreamEvent, Error>)
-    async throws
-{
-    var printed = ""
-    for try await snapshot in stream {
-        switch snapshot {
-        case .contentUpdate(rawContent: let raw, _):
-            let content: String = (try? raw.value()) ?? "Conversion failed"
-            print(content.dropFirst(printed.count), terminator: "")
-            printed = content
-        case .delegatedToolOutput(let output):
-            print("tool output: ", output)
-        }
-    }
-    print()
-}
-
-func testRespond(_ agent: Agent) async throws {
-    let response = try await agent.respond(to: "greet itsuki")
-    print("response: ", response)
-    print("current transcript history", agent.transcript.history)
-    let followUp = try await agent.respond(to: "who did you greet?")
-    print("follow up: ", followUp)
-}
-
 do {
     let agent = Agent(
-        tools: [.init(tool: GreetingTool(), delegate: true)],
+        tools: [.init(tool: GreetingTool(), delegate: false)],
         instruction: .init("You are a helpful assistant.")
     )
+    agent.addHook(
+        BeforeToolCallEventHandler(callback: { _ in
+            print("before first")
+        })
+    )
 
-    try await testRespond(agent)
+    agent.addHook(
+        BeforeToolCallEventHandler(callback: { _ in
+            print("before second")
+        })
+    )
+    agent.addHook(
+        BeforeToolCallEventHandler(
+            callback: { _ in
+                print("before system")
+            },
+            options: .init(order: BuiltInHookOrder.sdkFirst.rawValue)
+        )
+    )
+
+    agent.addHook(
+        AfterToolCallEventHandler(callback: { _ in
+            print("After first")
+        })
+    )
+
+    agent.addHook(
+        AfterToolCallEventHandler(callback: { _ in
+            print("After second")
+        })
+    )
+
+    agent.addHook(
+        AfterToolCallEventHandler(
+            callback: { _ in
+                print("After system")
+            },
+            options: .init(order: BuiltInHookOrder.sdkFirst.rawValue)
+        )
+    )
+
+    let response = try await agent.respond(to: "hello")
+    print("response: ", response)
+    print("current transcript history")
+    printHistory(agent.transcript.history)
+
+    //
+    //    //    try await testRespond(agent)
+    //
+    //    let session = LanguageModelSession(
+    //        transcript: .init(entries: [
+    //            .prompt(.init(segments: [.text(.init(content: "Hello. How's going"))]))
+    //        ])
+    //    )
+    //
+    //    let response = try await session.respond(prompt: {})
+    //    print(response)
+    //    print(session.transcript.history)
 } catch {
     print("error: ", error)
 }

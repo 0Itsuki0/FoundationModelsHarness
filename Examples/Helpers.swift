@@ -1,0 +1,92 @@
+//
+//  Helpers.swift
+//  FoundationModelsHarness
+//
+//  Created by Itsuki on 2026/10/10.
+//
+
+import FoundationModels
+import FoundationModelsHarness
+
+
+struct GreetingTool: Tool {
+    let name = "greet"
+    let description = "greet a name."
+        
+    @Generable
+    struct Arguments {
+        @Guide(description: "The name to greet")
+        var name: String
+    }
+    
+    func call(arguments: Arguments) async throws -> String {
+        print("Tool[\(name)] called with arguments: \(arguments)")
+        return "Hello \(arguments.name)"
+    }
+}
+
+
+func printStream(_ stream: AsyncThrowingStream<AgentStreamEvent, Error>)
+    async throws
+{
+    var printed = ""
+    for try await snapshot in stream {
+        switch snapshot {
+        case .contentUpdate(rawContent: let raw, _):
+            let content: String = (try? raw.value()) ?? "Conversion failed"
+            print(content.dropFirst(printed.count), terminator: "")
+            printed = content
+        case .delegatedToolOutput(let output):
+            print("tool output: ", output.segments.text)
+        }
+    }
+    print()
+}
+
+func printHistory(_ history: Transcript.HistoryView) {
+    for entry in history {
+        switch entry {
+
+        case .instructions(let value):
+            print(value.description)
+
+        case .prompt(let value):
+            print(value.description)
+
+        case .toolCalls(let value):
+            print(value.description)
+
+        case .toolOutput(let value):
+            print(value.description)
+
+        case .response(let value):
+            print(value.description)
+
+        case .reasoning(let value):
+            print(value.description)
+
+        case .data(let value):
+            print(value.description)
+
+        @unknown default:
+            print("unknown entry")
+        }
+    }
+}
+
+extension Array where Element == Transcript.Segment {
+    var text: String {
+        return self.compactMap { segment -> String? in
+            switch segment {
+            case .text(let text):
+                text.content.isEmpty ? nil : text.content
+            case .structure(let structure):
+                structure.content.jsonString
+            case .attachment(_):
+                nil
+            @unknown default:
+                nil
+            }
+        }.joined(separator: "\n")
+    }
+}

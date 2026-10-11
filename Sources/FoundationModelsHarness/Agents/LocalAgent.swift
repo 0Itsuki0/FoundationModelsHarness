@@ -15,14 +15,14 @@ import FoundationModels
 /// hook events, and {@link Plugin.initAgent}). The Strands SDK is responsible for
 /// providing all implementations.
 public struct LocalAgent: Sendable {
-    @SessionProperty
-    public var agentState: StateStore
+    /// Read/write
+    @SessionProperty public var agentState: InvocationState
 
-    @SessionProperty
-    public var invocationState: StateStore
+    /// Read/write
+    @SessionProperty public var invocationState: InvocationState
 
-    @SessionProperty
-    public var history: Transcript.HistoryView
+    /// Read Only
+    let history: Transcript.HistoryView
 }
 
 extension LocalAgent {

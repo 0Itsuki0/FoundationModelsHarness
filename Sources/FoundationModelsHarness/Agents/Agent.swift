@@ -12,19 +12,20 @@ extension SessionPropertyValues {
     /// Agent state accessible to tools and application logic.
     /// Lives outside the conversation context and persists across requests
     @SessionPropertyEntry
-    public var agentState: StateStore = [:]
+    public var agentState: AgentState = [:]
 
     /// Invocation state accessible to tools and application logic.
     /// Lives for a single invocation.
     /// State is not passed to the model during inference.
     @SessionPropertyEntry
-    public var invocationState: StateStore = [:]
+    public var invocationState: InvocationState = [:]
 
     @SessionPropertyEntry
     package var hookRegistry: HookRegistry = .init()
 }
 
-public typealias StateStore = [String: JSONValue]
+public typealias InvocationState = [String: JSONValue]
+public typealias AgentState = [String: JSONValue]
 
 struct AgentProfile: LanguageModelSession.DynamicProfile {
     let tools: [ToolConfig]
@@ -50,25 +51,44 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         // `transcriptErrorHandlingPolicy` needs to be set to `preserveTranscript`.
         // Otherwise, when we throw a FakeError, the previous request from the user will also be lost.
         .transcriptErrorHandlingPolicy(.preserveTranscript)
+        .onPrompt { prompt in
+            // history will contain the prompt as its last entry
+            // modifying the history here directly will effect what the model sees.
+            // Use it for context injection & BeforeModelCall event for prompt transformation
+            // TODO: add context injection / BeforeModelCall hook
+            print("on prompt")
+            //            print(prompt)
+            print(history)
+            //            history = history.prefix(history.count - 1)
+            //            history.append(.prompt(.init(segments: [.text(.init(content: "greet dan"))])))
+        }
         .onToolOutput { toolCall, toolOutput in
+            print("onToolOutput")
+            // history will contains the tool call but not the tool output
+            print(history)
+
             let handlers = hookRegistry.afterToolCallHandlers
-            let event = AfterToolCallEventHandler.EventPayload(
+            var event = AfterToolCallEventHandler.EventPayload(
                 toolCall: toolCall,
                 toolOutput: toolOutput,
                 agent: createLocalAgent()
             )
             for handler in handlers {
-                try await handler.callback(event)
+                try await handler.callback(&event)
             }
         }
         .onToolCall { toolCall in
+            print("onToolCall")
+            // history will contains the tool call
+            print(history)
+
             let handlers = hookRegistry.beforeToolCallHandlers
-            let event = BeforeToolCallEventHandler.EventPayload(
+            var event = BeforeToolCallEventHandler.EventPayload(
                 toolCall: toolCall,
                 agent: createLocalAgent()
             )
             for handler in handlers {
-                try await handler.callback(event)
+                try await handler.callback(&event)
             }
         }
     }
@@ -77,7 +97,7 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         return LocalAgent(
             agentState: _agentState,
             invocationState: _invocationState,
-            history: _history
+            history: history
         )
     }
 }
@@ -96,7 +116,7 @@ public final class Agent: Sendable {
 
     /// Agent state accessible to tools and application logic.
     /// Lives outside the conversation context and persists across requests
-    var agentState: StateStore {
+    var agentState: AgentState {
         get {
             session.properties.agentState
         }
@@ -107,7 +127,7 @@ public final class Agent: Sendable {
 
     private let session: LanguageModelSession
 
-    private var invocationState: StateStore {
+    private var invocationState: InvocationState {
         get {
             session.properties.invocationState
         }
@@ -143,7 +163,7 @@ public final class Agent: Sendable {
     }
 
     private func setupBuiltInHooks() {
-        hookRegistry.afterToolCallHandlers.append(
+        self.addHook(
             AfterToolCallEventHandler(
                 callback: { [weak self] event in
                     guard let self else { return }
@@ -155,6 +175,27 @@ public final class Agent: Sendable {
             )
         )
     }
+    
+    public func addHook(_ hook: any HookEventHandler) {
+        self.hookRegistry.addHook(hook)
+    }
+    
+    public func removeHook(_ id: HookID) {
+        self.hookRegistry.removeHook(id)
+    }
+    
+    public func removeHooks(for types: Set<HookEventType>) {
+        self.hookRegistry.removeHooks(for: types)
+    }
+    
+    public func removeAllHooks() {
+        self.hookRegistry.removeAllHooks()
+    }
+
+
+    private func resetInvocationState() {
+        self.invocationState = .init()
+    }
 
     // TODO: - add in wrappers for other respond / streamResponse methods
 
@@ -164,16 +205,28 @@ public final class Agent: Sendable {
         options: GenerationOptions = GenerationOptions()
     ) async throws -> AgentResult {
 
+        defer {
+            self.resetInvocationState()
+        }
+
         do {
             let response = try await session.respond(to: prompt)
-            return .modelOutput(
-                rawContent: response.rawContent,
-                usage: response.usage
+            let entry: Transcript.Response =
+                self.session.lastResponse
+                ?? .init(segments: [.text(.init(content: response.content))])
+            return AgentResult(
+                stopReason: .modelOutput,
+                lastMessage: entry,
+                invocationState: invocationState
             )
         } catch {
             if let error = error as? DelegatedToolError {
-                addDelegatedToolOutput(error.toolOutput)
-                return .delegatedToolOutput(error.toolOutput)
+                let response = addDelegatedToolOutput(error.toolOutput)
+                return AgentResult(
+                    stopReason: .delegatedToolOutput,
+                    lastMessage: response,
+                    invocationState: invocationState
+                )
             }
 
             throw error
@@ -186,7 +239,11 @@ public final class Agent: Sendable {
     ) -> AsyncThrowingStream<AgentStreamEvent, Error> {
 
         return AsyncThrowingStream<AgentStreamEvent, Error> { continuation in
-            Task { [session] in
+            Task { [session, resetInvocationState] in
+                defer {
+                    resetInvocationState()
+                }
+
                 do {
                     for try await snapshot in session.streamResponse(to: prompt)
                     {
@@ -216,18 +273,37 @@ public final class Agent: Sendable {
         }
     }
 
+    @discardableResult
     private func addDelegatedToolOutput(
         _ output: Transcript.ToolOutput
-    ) {
+    ) -> Transcript.Response {
         // NOTE: Inserting a tool output is not necessary
         // aka: ToolCalls -> Response directly will not cause any error on the next generation using the transcript history,
         // but adding it here so that each tool call can be paired with an output
         session.transcript.history.append(
             .toolOutput(output)
         )
+        let response = Transcript.Response(segments: output.segments)
         session.transcript.history.append(
-            .response(.init(segments: output.segments))
+            .response(response)
         )
+        return response
+    }
+}
+
+extension Transcript.Entry {
+    var asResponse: Transcript.Response? {
+        if case .response(let response) = self {
+            return response
+        }
+        return nil
+    }
+}
+extension LanguageModelSession {
+    var lastResponse: Transcript.Response? {
+        self.transcript.history.compactMap {
+            $0.asResponse
+        }.last
     }
 }
 
