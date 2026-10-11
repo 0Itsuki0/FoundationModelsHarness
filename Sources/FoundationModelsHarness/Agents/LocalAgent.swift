@@ -22,7 +22,7 @@ public struct LocalAgent: Sendable {
     @SessionProperty public var invocationState: InvocationState
 
     /// Read Only
-    let history: Transcript.HistoryView
+    public let history: Transcript.HistoryView
 }
 
 extension LocalAgent {

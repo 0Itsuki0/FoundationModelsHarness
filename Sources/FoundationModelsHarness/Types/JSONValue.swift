@@ -2,10 +2,11 @@
 //  JSONValue.swift
 //  FoundationModelsHarness
 //
-//  Created by Itsuki on 2026/10/08.
+//  Created by Itsuki on 2026/10/11.
 //
 
 import Foundation
+import FoundationModels
 
 /// Loosely-typed JSON for tool inputs/outputs and schemas, where the shape
 /// is determined at runtime.
@@ -100,5 +101,51 @@ extension JSONValue: ExpressibleByNilLiteral, ExpressibleByBooleanLiteral,
     }
     public init(dictionaryLiteral elements: (String, JSONValue)...) {
         self = .object(.init(uniqueKeysWithValues: elements))
+    }
+}
+
+extension JSONValue {
+    public static func from(generatedContent: GeneratedContent) throws
+        -> JSONValue
+    {
+        switch generatedContent.kind {
+        case .null: return .null
+        case .bool(let v): return .bool(v)
+        case .number(let v): return .number(v)
+        case .string(let v): return .string(v)
+        case .array(let v): return try .array(v.map(JSONValue.from))
+        case .structure(properties: let v, orderedKeys: _):
+            return try .object(v.mapValues(JSONValue.from))
+        @unknown default:
+            throw EncodingError.invalidValue(
+                self,
+                .init(
+                    codingPath: [],
+                    debugDescription: "Unsupported GeneratedContent kind"
+                )
+            )
+        }
+    }
+
+    public var generatedContent: GeneratedContent {
+        switch self {
+        case .null:
+            return .init(kind: .null)
+        case .bool(let value):
+            return .init(kind: .bool(value))
+        case .number(let value):
+            return .init(kind: .number(Double(value)))
+        case .string(let value):
+            return .init(kind: .string(value))
+        case .array(let value):
+            return .init(kind: .array(value.map(\.generatedContent)))
+        case .object(let value):
+            return .init(
+                kind: .structure(
+                    properties: value.mapValues(\.generatedContent),
+                    orderedKeys: value.map(\.key)
+                )
+            )
+        }
     }
 }

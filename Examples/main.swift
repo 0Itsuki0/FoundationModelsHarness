@@ -15,44 +15,11 @@ do {
         instruction: .init("You are a helpful assistant.")
     )
     agent.addHook(
-        BeforeToolCallEventHandler(callback: { _ in
-            print("before first")
+        BeforeToolCallEventHandler(callback: { event in
+            event.agent.agentState["123"] = "123"
+            event.agent.invocationState["123"] = "test"
+            event.toolCall.arguments = try .init(json: "{\"name\": \"⭐⭐user⭐⭐\"}")
         })
-    )
-
-    agent.addHook(
-        BeforeToolCallEventHandler(callback: { _ in
-            print("before second")
-        })
-    )
-    agent.addHook(
-        BeforeToolCallEventHandler(
-            callback: { _ in
-                print("before system")
-            },
-            options: .init(order: BuiltInHookOrder.sdkFirst.rawValue)
-        )
-    )
-
-    agent.addHook(
-        AfterToolCallEventHandler(callback: { _ in
-            print("After first")
-        })
-    )
-
-    agent.addHook(
-        AfterToolCallEventHandler(callback: { _ in
-            print("After second")
-        })
-    )
-
-    agent.addHook(
-        AfterToolCallEventHandler(
-            callback: { _ in
-                print("After system")
-            },
-            options: .init(order: BuiltInHookOrder.sdkFirst.rawValue)
-        )
     )
 
     let response = try await agent.respond(to: "hello")
