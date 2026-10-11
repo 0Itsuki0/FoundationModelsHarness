@@ -22,6 +22,10 @@ extension SessionPropertyValues {
 
     @SessionPropertyEntry
     package var hookRegistry: HookRegistry = .init()
+
+    @SessionPropertyEntry
+    package var isRetry: Bool = false
+
 }
 
 public typealias InvocationState = [String: JSONValue]
@@ -67,6 +71,15 @@ public final class Agent: Sendable {
         }
         set {
             session.properties.hookRegistry = newValue
+        }
+    }
+
+    private var isRetry: Bool {
+        get {
+            session.properties.isRetry
+        }
+        set {
+            session.properties.isRetry = newValue
         }
     }
 
@@ -128,7 +141,7 @@ public final class Agent: Sendable {
         to prompt: String,
         options: GenerationOptions = GenerationOptions()
     ) async throws -> AgentResult {
-        self.invocationState.clearRetry()
+        self.isRetry = false
 
         defer {
             self.resetInvocationState()
@@ -164,9 +177,9 @@ public final class Agent: Sendable {
 
     private func retry(options: GenerationOptions) async throws -> AgentResult {
         print(#function)
-        invocationState.setRetry()
+        self.isRetry = true
         defer {
-            invocationState.clearRetry()
+            self.isRetry = false
         }
         return try await self.respond(to: "", options: options)
     }
@@ -197,9 +210,9 @@ public final class Agent: Sendable {
             .Continuation
     ) async {
         print(#function)
-        invocationState.setRetry()
+        self.isRetry = true
         defer {
-            invocationState.clearRetry()
+            self.isRetry = false
         }
         await self.streamHelper(
             prompt: "",

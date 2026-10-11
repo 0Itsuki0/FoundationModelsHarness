@@ -20,12 +20,15 @@ public struct BeforeToolCallEventHandler: HookEventHandler {
 
     public struct EventPayload: Sendable {
         /// The tool call that triggers the event
+        /// - Mutate `toolCall` in place, or replace it wholesale, to rewrite the tool
+        ///   input or name before execution.
+        ///   The `name` has to be one of the registered tools. If it  is changed, a different tool will be called.
         public var toolCall: Transcript.ToolCall
-        
-        /// All tools being called right now including the one triggers the event
+
+        /// All tools being called in the current turn including the one triggers the event
         public let toolCalls: [Transcript.ToolCall]
 
-        /// LocalAgent.History contains transcript history up to (not including) the last tool calls
+        /// `LocalAgent.History` contains transcript history up to (not including) the last tool calls
         public let agent: LocalAgent
 
         // TODO: add hook cancellation. (cancel with a message that will be send back to the model)

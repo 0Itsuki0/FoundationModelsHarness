@@ -12,16 +12,19 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
     let instruction: Instructions
 
     @SessionProperty(\.invocationState)
-    var invocationState
+    private var invocationState
 
     @SessionProperty(\.agentState)
-    var agentState
+    private var agentState
 
     @SessionProperty(\.hookRegistry)
-    var hookRegistry
+    private var hookRegistry
 
     @SessionProperty(\.history)
-    var history
+    private var history
+
+    @SessionProperty(\.isRetry)
+    private var isRetry
 
     var body: some LanguageModelSession.DynamicProfile {
         Profile {
@@ -40,7 +43,7 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
             print(history)
             // remove the dummy empty prompt sent to force the retry from the history
             // as long as the transcript ends with prompt / tool output, the respond or response stream works
-            if invocationState.isRetry {
+            if isRetry {
                 history = history.prefix(history.count - 1)
             }
         }
@@ -198,28 +201,10 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
     }
 }
 
-struct RetryError: Error {}
+struct RetryError: FakeError {}
 
 extension Transcript.ToolCalls {
     func expand() -> [Transcript.ToolCall] {
         return Array(self)
-    }
-}
-
-enum PackageInvocationStateKey: String {
-    case retry
-}
-
-extension InvocationState {
-    var isRetry: Bool {
-        return self[PackageInvocationStateKey.retry.rawValue] != nil
-    }
-
-    mutating func setRetry() {
-        self[PackageInvocationStateKey.retry.rawValue] = true
-    }
-
-    mutating func clearRetry() {
-        self.removeValue(forKey: PackageInvocationStateKey.retry.rawValue)
     }
 }

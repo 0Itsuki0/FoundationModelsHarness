@@ -22,3 +22,6 @@ public enum HookEventType: Sendable, Hashable, Equatable {
         }
     }
 }
+
+// TODO: - add other types
+// before model call, before invocation, after invocation
