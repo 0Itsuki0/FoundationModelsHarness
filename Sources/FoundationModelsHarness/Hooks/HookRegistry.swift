@@ -7,7 +7,7 @@
 
 import Foundation
 
-package struct HookRegistry {
+struct HookRegistry {
     private var _afterToolCallHandlers: [AfterToolCallEventHandler]
     private(set) var afterToolCallHandlers: [AfterToolCallEventHandler] {
         get {

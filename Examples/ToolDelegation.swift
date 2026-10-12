@@ -8,6 +8,13 @@
 import FoundationModels
 import FoundationModelsHarness
 
+/// Tool Delegation Example:
+///
+/// When a tool is configured with `delegate: true`, this package ensures:
+/// 1. The agent loop exits immediately after a successful delegation (via endTurn)
+/// 2. The delegation tool's content blocks become the final assistant message
+/// and
+/// on best effort: The delegation tool is the only tool called in the turn
 private func testStream(_ agent: Agent) async throws {
     try await printStream(agent.streamResponse(to: "greet itsuki"))
     try await printStream(agent.streamResponse(to: "who did you greet?"))

@@ -14,24 +14,31 @@ do {
         tools: [.init(tool: GreetingTool(), delegate: true)],
         instruction: .init("You are a helpful assistant.")
     )
+
     agent.addHook(
         BeforeToolCallEventHandler(callback: { event in
-            event.agent.agentState["123"] = "123"
-            event.agent.invocationState["123"] = "test"
-            event.toolCall.arguments = try .init(json: "{\"name\": \"⭐⭐user⭐⭐\"}")
-            print("before tool call finish")
+            // modify tool calls
+            event.agent.invocationState["before called"] = true
+
+            event.toolCall.toolName = GreetingTool().name
+            let argument = GreetingTool.Arguments(name: "⭐⭐itsuki⭐⭐")
+            event.toolCall.arguments = argument.generatedContent
         })
     )
 
-    let response = try await agent.respond(to: "hello")
+    let response = try await agent.respond(to: "hello.")
+
     print("response: ", response)
-    print("current transcript history")
+
+    // testing stream
+    //    try await printStream(agent.streamResponse(to: "greet itsuki"))
+    //    try await printStream(
+    //        agent.streamResponse(to: "what's your last tool use?")
+    //    )
+
+    print("---Session History---")
     printHistory(agent.transcript.history)
-//    try await printStream(agent.streamResponse(to: "greet itsuki"))
-//    try await printStream(agent.streamResponse(to: "who did you greet?"))
-//
-//    print("current transcript history")
-//    printHistory(agent.transcript.history)
+    print("------")
 
     //
     //    //    try await testRespond(agent)

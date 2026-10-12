@@ -71,20 +71,3 @@ func printHistory(_ history: Transcript.HistoryView) {
         }
     }
 }
-
-extension Array where Element == Transcript.Segment {
-    var text: String {
-        return self.compactMap { segment -> String? in
-            switch segment {
-            case .text(let text):
-                text.content.isEmpty ? nil : text.content
-            case .structure(let structure):
-                structure.content.jsonString
-            case .attachment(_):
-                nil
-            @unknown default:
-                nil
-            }
-        }.joined(separator: "\n")
-    }
-}

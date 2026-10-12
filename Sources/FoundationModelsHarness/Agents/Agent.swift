@@ -21,11 +21,10 @@ extension SessionPropertyValues {
     public var invocationState: InvocationState = [:]
 
     @SessionPropertyEntry
-    package var hookRegistry: HookRegistry = .init()
+    var hookRegistry: HookRegistry = .init()
 
     @SessionPropertyEntry
-    package var isInternalRetry: Bool = false
-
+    var isInternalRetry: Bool = false
 }
 
 public typealias InvocationState = [String: JSONValue]
@@ -93,6 +92,10 @@ public final class Agent: Sendable {
     }
 
     public init(tools: [ToolConfig], instruction: Instructions) {
+        let instruction = ToolConfig.injectDelegationPrompt(
+            for: tools,
+            on: instruction
+        )
         let profile = AgentProfile(tools: tools, instruction: instruction)
         let session = LanguageModelSession(profile: profile)
         self.session = session

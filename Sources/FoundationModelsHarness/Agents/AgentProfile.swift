@@ -203,7 +203,7 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
 
         self.history = historyTemp
 
-        /// throw retry error to force the modal to generate a response based on the tool output.
+        /// throw retry error to force the model to generate a response based on the tool output.
         throw RetryError.afterToolOutput
     }
 
