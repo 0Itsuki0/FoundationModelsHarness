@@ -2,6 +2,11 @@
 
 ### Current Progress
 
+1. Tool delegation
+2. Hook: 
+    - BeforeToolCall (partial)
+    - AfterToolCall (partial)
+
 
 ### Brain storming:
 
