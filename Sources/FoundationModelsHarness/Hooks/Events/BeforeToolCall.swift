@@ -31,8 +31,9 @@ public struct BeforeToolCallEventHandler: HookEventHandler {
         /// `LocalAgent.History` contains transcript history up to (not including) the last tool calls
         public let agent: LocalAgent
 
-        // TODO: add hook cancellation. (cancel with a message that will be send back to the model)
+        // TODO: add hook cancellation. (cancel with a message that will be used as the tool output and  send back to the model)
         // strands-ts/src/agent/agent.ts: line 2450
+        // The AfterToolCallEvent will be fired with the cancel message.
     }
 
     static public let eventType: HookEventType = .beforeToolCall

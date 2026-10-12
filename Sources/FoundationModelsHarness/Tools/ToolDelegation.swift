@@ -8,7 +8,7 @@
 import FoundationModels
 
 // Internal *fake* error only used for custom model invocation / tool use / response handling
-protocol FakeError: Error {}
+protocol FakeError: Error, Sendable {}
 
 struct DelegatedToolError: FakeError {
     let toolOutput: Transcript.ToolOutput

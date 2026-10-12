@@ -24,7 +24,7 @@ extension SessionPropertyValues {
     package var hookRegistry: HookRegistry = .init()
 
     @SessionPropertyEntry
-    package var isRetry: Bool = false
+    package var isInternalRetry: Bool = false
 
 }
 
@@ -74,18 +74,18 @@ public final class Agent: Sendable {
         }
     }
 
-    private var isRetry: Bool {
+    private var isInternalRetry: Bool {
         get {
-            session.properties.isRetry
+            session.properties.isInternalRetry
         }
         set {
-            session.properties.isRetry = newValue
+            session.properties.isInternalRetry = newValue
         }
     }
 
     private let tools: [ToolConfig]
     private var delegatedToolName: [String] {
-        self.tools.filter({ $0.delegate }).map(\.tool.name)
+        self.tools.filter({ $0.delegate }).map(\.invocableTool.name)
     }
 
     private func isDelegatedTool(_ toolName: String) -> Bool {
@@ -139,16 +139,20 @@ public final class Agent: Sendable {
     @discardableResult
     public func respond(
         to prompt: String,
-        options: GenerationOptions = GenerationOptions()
+        options: GenerationOptions = GenerationOptions(),
+        metadata: [String: any ConvertibleToGeneratedContent] = [:]
     ) async throws -> AgentResult {
-        self.isRetry = false
+        self.isInternalRetry = false
 
         defer {
             self.resetInvocationState()
         }
-
+        self.invocationState["internal"] = 123
         do {
-            let response = try await session.respond(to: prompt)
+            let response = try await session.respond(
+                to: prompt,
+                metadata: metadata
+            )
             let entry: Transcript.Response =
                 self.session.lastResponse
                 ?? .init(segments: [.text(.init(content: response.content))])
@@ -167,33 +171,76 @@ public final class Agent: Sendable {
                 )
             }
 
-            if error.isRetryError {
-                return try await retry(options: options)
+            if let error = error.retryError {
+                return try await retry(
+                    for: error,
+                    options: options,
+                    metadata: metadata
+                )
             }
 
             throw error
         }
     }
 
-    private func retry(options: GenerationOptions) async throws -> AgentResult {
+    private func retry(
+        for error: RetryError,
+        options: GenerationOptions,
+        metadata: [String: any ConvertibleToGeneratedContent],
+    ) async throws -> AgentResult {
         print(#function)
-        self.isRetry = true
+        self.isInternalRetry = true
         defer {
-            self.isRetry = false
+            self.isInternalRetry = false
         }
-        return try await self.respond(to: "", options: options)
+
+        // A dummy empty prompt in order to force the retry from the current history
+        // the dummy will be removed from the history within `AgentProfile.onPrompt`
+        return try await self.respond(
+            to: "",
+            options: buildRetryGenerationOptions(options, for: error),
+            metadata: buildRetryMetadata(metadata)
+        )
+    }
+
+    /// Update tool calling mode based on the error to avoid infinite looping
+    private func buildRetryGenerationOptions(
+        _ options: GenerationOptions,
+        for error: RetryError
+    ) -> GenerationOptions {
+        var options = options
+        switch error {
+        case .afterToolOutput:
+            /// Make sure the `toolCallingMode` is not `required` to avoid an infinite tool-calling loop (which is one of the FoundationModels SDK bug as of 2026.10.12)
+            if options.toolCallingMode == .required {
+                options.toolCallingMode = .allowed
+            }
+        }
+        return options
+    }
+
+    private func buildRetryMetadata(
+        _ metadata: [String: any ConvertibleToGeneratedContent]
+    ) -> [String: any ConvertibleToGeneratedContent] {
+        var metadata = metadata
+        metadata[InternalMetadataKey.dummyPrompt] = true
+        return metadata
     }
 
     public func streamResponse(
         to prompt: String,
-        options: GenerationOptions = GenerationOptions()
+        options: GenerationOptions = GenerationOptions(),
+        metadata: [String: any ConvertibleToGeneratedContent] = [:]
     ) -> AsyncThrowingStream<AgentStreamEvent, Error> {
-
         return AsyncThrowingStream<AgentStreamEvent, Error> { continuation in
+            // Required to convert ConvertibleToGeneratedContent to GeneratedContent to avoid the following concurrency error:
+            // Passing closure as a 'sending' parameter risks causing data races between code in the current isolation context and concurrent execution of the closure
+            let metadata = metadata.mapValues(\.generatedContent)
 
-            Task { [session, resetInvocationState] in
+            Task { [session, resetInvocationState, metadata] in
                 await streamHelper(
                     prompt: prompt,
+                    metadata: metadata,
                     session: session,
                     resetInvocationState: resetInvocationState,
                     streamingInto: continuation
@@ -203,20 +250,28 @@ public final class Agent: Sendable {
     }
 
     private func retryStream(
+        for error: RetryError,
         options: GenerationOptions,
+        metadata: [String: any ConvertibleToGeneratedContent],
         session: LanguageModelSession,
         resetInvocationState: () -> Void,
         streamingInto continuation: AsyncThrowingStream<AgentStreamEvent, Error>
             .Continuation
     ) async {
         print(#function)
-        self.isRetry = true
+        self.isInternalRetry = true
         defer {
-            self.isRetry = false
+            self.isInternalRetry = false
         }
+
+        let metadata = buildRetryMetadata(metadata)
+
+        // A dummy empty prompt in order to force the retry from the current history
+        // the dummy will be removed from the history within `AgentProfile.onPrompt`
         await self.streamHelper(
             prompt: "",
-            options: options,
+            options: buildRetryGenerationOptions(options, for: error),
+            metadata: buildRetryMetadata(metadata),
             session: session,
             resetInvocationState: resetInvocationState,
             streamingInto: continuation
@@ -226,6 +281,7 @@ public final class Agent: Sendable {
     private func streamHelper(
         prompt: String,
         options: GenerationOptions = GenerationOptions(),
+        metadata: [String: any ConvertibleToGeneratedContent],
         session: LanguageModelSession,
         resetInvocationState: () -> Void,
         streamingInto continuation: AsyncThrowingStream<AgentStreamEvent, Error>
@@ -236,7 +292,10 @@ public final class Agent: Sendable {
         }
 
         do {
-            for try await snapshot in session.streamResponse(to: prompt) {
+            for try await snapshot in session.streamResponse(
+                to: prompt,
+                metadata: metadata
+            ) {
                 continuation.yield(
                     .contentUpdate(
                         rawContent: snapshot.rawContent,
@@ -257,9 +316,11 @@ public final class Agent: Sendable {
                 return
             }
 
-            if error.isRetryError {
+            if let error = error.retryError {
                 await retryStream(
+                    for: error,
                     options: options,
+                    metadata: metadata,
                     session: session,
                     resetInvocationState: resetInvocationState,
                     streamingInto: continuation
@@ -303,6 +364,20 @@ extension Transcript.Entry {
         }
         return nil
     }
+
+    var asPrompt: Transcript.Prompt? {
+        if case .prompt(let value) = self {
+            return value
+        }
+        return nil
+    }
+
+    var asInstruction: Transcript.Instructions? {
+        if case .instructions(let value) = self {
+            return value
+        }
+        return nil
+    }
 }
 
 extension LanguageModelSession {
@@ -333,6 +408,10 @@ extension Array where Element == Transcript.Segment {
 extension Error {
     var isRetryError: Bool {
         return self.isError(RetryError.self)
+    }
+
+    var retryError: RetryError? {
+        return self.error(RetryError.self)
     }
 
     var delegatedError: DelegatedToolError? {
