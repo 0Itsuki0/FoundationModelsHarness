@@ -41,7 +41,8 @@ struct HookRegistry {
         self._beforeToolCallHandlers = []
     }
 
-    mutating func addHook(_ hook: any HookEventHandler) {
+    @discardableResult
+    mutating func addHook(_ hook: any HookEventHandler) -> HookID {
         if let hook = hook as? AfterToolCallEventHandler {
             self._afterToolCallHandlers.append(hook)
         }
@@ -49,6 +50,8 @@ struct HookRegistry {
         if let hook = hook as? BeforeToolCallEventHandler {
             self._beforeToolCallHandlers.append(hook)
         }
+
+        return hook.id
     }
 
     mutating func removeHook(_ id: HookID) {

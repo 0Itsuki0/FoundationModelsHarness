@@ -78,29 +78,40 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
     /// Handle Tool calls on the Profile.
     private func handleOnToolCall(_ toolCall: Transcript.ToolCall) async throws
     {
-        print(#function)
-        /// history will contains the last Transcript.ToolCalls entry
+        /// `history` will contains the last Transcript.ToolCalls entry
         /// (which contains the toolCall: Transcript.ToolCall as one of the calls)
-        /// create a temporary history removing it
         ///
-        /// NOTE: Not modifying history directly at the start
+        /// NOTE: **Not** modifying history directly at the start
         /// so that in the case where handler throws
         /// we still have a clean history (managed by the FoundationModels SDK. Untouched)
-        var historyTemp = history
+        let historyBeforeLastToolCall: Transcript.HistoryView
         /// extracted last tool calls event
-        let lastToolCallsEvent =
-            historyTemp.popLast()?.asToolCalls ?? .init([toolCall])
+        let lastToolCallsEvent: Transcript.ToolCalls
+
+        if let lastHistory = history.last?.asToolCalls {
+            historyBeforeLastToolCall = history.prefix(history.count - 1)
+            lastToolCallsEvent = lastHistory
+        } else {
+            historyBeforeLastToolCall = history
+            lastToolCallsEvent = .init([toolCall])
+        }
+
         let calls = lastToolCallsEvent.expand()
 
         let handlers = hookRegistry.beforeToolCallHandlers
         var event = BeforeToolCallEventHandler.EventPayload(
             toolCall: toolCall,
             toolCalls: calls,
-            agent: createLocalAgent(with: historyTemp)
+            agent: createLocalAgent(with: historyBeforeLastToolCall)
         )
 
         for handler in handlers {
             try await handler.callback(&event)
+        }
+
+        /// Tool call cancelled with a cancelled content
+        if let cancel = event.cancel {
+            return try await handleToolCallCancelled(cancel, on: toolCall)
         }
 
         /// No changes to the tool Call. Return early.
@@ -108,12 +119,41 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
             return
         }
 
-        try await self.handleToolCallUpdate(
+        try await self.handleToolCallUpdated(
             toolCalls: lastToolCallsEvent,
             previousId: toolCall.id,
             updated: event.toolCall,
-            historyTemp: historyTemp
+            historyBeforeLastToolCall: historyBeforeLastToolCall
         )
+    }
+
+    /// Tool call cancelled
+    private func handleToolCallCancelled(
+        _ cancellationContent: JSONValue,
+        on toolCall: Transcript.ToolCall
+    )
+        async throws
+    {
+        let toolOutput = ToolOutputWrapper(cancellationContent, status: .error)
+        let outputTranscript = Transcript.ToolOutput(
+            id: toolCall.id,
+            toolName: toolCall.toolName,
+            segments: toolOutput.segments
+        )
+
+        /// programmatically triggers the onToolOutput Event
+        try await self.handleOnToolOutput(
+            toolCall,
+            toolOutput: outputTranscript
+        )
+
+        /// Add in the tool output to the session's history
+        self.history.append(
+            .toolOutput(outputTranscript)
+        )
+
+        /// throw retry error to force the model to generate a response based on the tool output.
+        throw RetryModelGenerationError.afterToolOutput
     }
 
     /// Tool call parameters (name, input argument, and etc) updated.
@@ -126,11 +166,11 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
     /// 2. append the tool output to the history
     /// 3. throw to terminate the current turn
     /// 4. retry the generation with the tool already outputted
-    private func handleToolCallUpdate(
+    private func handleToolCallUpdated(
         toolCalls: Transcript.ToolCalls,
         previousId: Transcript.ToolCall.ID,
         updated toolCall: Transcript.ToolCall,
-        historyTemp: Transcript.HistoryView
+        historyBeforeLastToolCall: Transcript.HistoryView
     )
         async throws
     {
@@ -150,7 +190,6 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         }
 
         var calls = toolCalls.expand()
-        var historyTemp = historyTemp
 
         /// update the target tool call
         if let index = calls.firstIndex(where: { $0.id == previousId }) {
@@ -166,11 +205,10 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         /// NOTE: that we need to set `self.history` twice: once here, once after the `handleOnToolOutput`,
         /// because if one of the AfterToolCallEventHandler throws an error,
         /// we still want to record the updated tool call.
-        historyTemp.append(
-            .toolCalls(.init(id: toolCalls.id, calls))
-        )
-
-        self.history = historyTemp
+        self.history =
+            historyBeforeLastToolCall + [
+                .toolCalls(.init(id: toolCalls.id, calls))
+            ]
 
         /// **Programmatically** call the wrapper tool if there is a change.
         ///
@@ -197,14 +235,12 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         )
 
         /// Add in the tool output to the session's history
-        historyTemp.append(
+        self.history.append(
             .toolOutput(outputTranscript)
         )
 
-        self.history = historyTemp
-
         /// throw retry error to force the model to generate a response based on the tool output.
-        throw RetryError.afterToolOutput
+        throw RetryModelGenerationError.afterToolOutput
     }
 
     private func createLocalAgent(with history: Transcript.HistoryView)
@@ -327,7 +363,7 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
 
 }
 
-enum RetryError: FakeError, Equatable, Hashable {
+enum RetryModelGenerationError: FakeError, Equatable, Hashable {
     /// retry model generation based on tool output
     case afterToolOutput
 }

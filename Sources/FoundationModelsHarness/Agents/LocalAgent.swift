@@ -11,17 +11,24 @@ import FoundationModels
 
 /// Interface for agents with locally accessible state, messages, tools, and hooks.
 ///
-/// This interface is exported for typing purposes only (e.g. in {@link ToolContext},
-/// hook events, and {@link Plugin.initAgent}). The Strands SDK is responsible for
-/// providing all implementations.
+/// This interface is only for accessing state in hook events.
 public struct LocalAgent: Sendable {
+    /// Agent state accessible to tools and application logic.
+    /// Lives outside the conversation context and persists across requests
+    ///
     /// Read/write
     @SessionProperty public var agentState: InvocationState
 
+    /// Invocation state accessible to tools and application logic.
+    /// Lives for a single invocation.
+    /// State is not passed to the model during inference.
+    ///
     /// Read/write
     @SessionProperty public var invocationState: InvocationState
 
-    /// Read Only
+    /// The transcript entries excluding the leading instructions entry, if present.
+    ///
+    /// Read only
     public let history: Transcript.HistoryView
 }
 

@@ -11,47 +11,37 @@ import SwiftUI
 
 do {
     let agent = Agent(
-        tools: [.init(tool: GreetingTool(), delegate: true)],
+        tools: [.init(tool: GreetingTool(), delegate: false)],
         instruction: .init("You are a helpful assistant.")
     )
 
     agent.addHook(
         BeforeToolCallEventHandler(callback: { event in
-            // modify tool calls
             event.agent.invocationState["before called"] = true
 
+            // cancel the tool call
+            // event.cancel = .init(stringLiteral: "failed to greet. Do it yourself.")
+
+            // modify tool calls
             event.toolCall.toolName = GreetingTool().name
             let argument = GreetingTool.Arguments(name: "⭐⭐itsuki⭐⭐")
             event.toolCall.arguments = argument.generatedContent
         })
     )
 
-    let response = try await agent.respond(to: "hello.")
-
-    print("response: ", response)
+    // let response = try await agent.respond(to: "hello.")
+    // print("response: ", response)
 
     // testing stream
-    //    try await printStream(agent.streamResponse(to: "greet itsuki"))
-    //    try await printStream(
-    //        agent.streamResponse(to: "what's your last tool use?")
-    //    )
+    try await printStream(agent.streamResponse(to: "greet itsuki"))
+    try await printStream(
+        agent.streamResponse(to: "what's your last tool use?")
+    )
 
     print("---Session History---")
     printHistory(agent.transcript.history)
     print("------")
 
-    //
-    //    //    try await testRespond(agent)
-    //
-    //    let session = LanguageModelSession(
-    //        transcript: .init(entries: [
-    //            .prompt(.init(segments: [.text(.init(content: "Hello. How's going"))]))
-    //        ])
-    //    )
-    //
-    //    let response = try await session.respond(prompt: {})
-    //    print(response)
-    //    print(session.transcript.history)
 } catch {
     print("error: ", error)
 }

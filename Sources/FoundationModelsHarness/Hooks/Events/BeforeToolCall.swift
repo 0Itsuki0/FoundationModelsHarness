@@ -19,21 +19,37 @@ public struct BeforeToolCallEventHandler: HookEventHandler {
     public let id = HookID()
 
     public struct EventPayload: Sendable {
-        /// The tool call that triggers the event
+        /// The tool call that triggers the event.
+        ///
+        /// Read/write.
+        ///
         /// - Mutate `toolCall` in place, or replace it wholesale, to rewrite the tool
         ///   input or name before execution.
         ///   The `name` has to be one of the registered tools. If it  is changed, a different tool will be called.
         public var toolCall: Transcript.ToolCall
 
         /// All tools being called in the current turn including the one triggers the event
+        ///
+        /// Read only.
         public let toolCalls: [Transcript.ToolCall]
 
-        /// `LocalAgent.History` contains transcript history up to (not including) the last tool calls
+        /// Following parameters accessible through`agent`:
+        ///
+        /// - `agentState`: Agent state persists across requests. Read/write.
+        /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
+        /// - `history`: The transcript entries excluding the leading instructions entry, if present, up to **(not including)** the last tool calls
         public let agent: LocalAgent
 
-        // TODO: add hook cancellation. (cancel with a message that will be used as the tool output and  send back to the model)
-        // strands-ts/src/agent/agent.ts: line 2450
-        // The AfterToolCallEvent will be fired with the cancel message.
+        /// Set to a non-nil value to cancel this tool call with the value being the result error message. (`JSONValue.null` will cancel the tool call.)
+        ///
+        /// Read/write.
+        ///
+        /// A `Transcript.ToolOutput` will be created from the value here and send back to the model for a final response.
+        /// The `ToolOutput` segments will be one single `Transcript.StructuredSegment` created with the JSON representation of `ToolOutputWrapper`
+        /// where the `content` is the value set on the `cancel`,  and the `status` being `Status.error`.
+        ///
+        /// `AfterToolCall` hook will be triggered with the `Transcript.ToolOutput` created above.
+        public var cancel: JSONValue? = nil
     }
 
     static public let eventType: HookEventType = .beforeToolCall
@@ -57,5 +73,41 @@ extension Array where Element == BeforeToolCallEventHandler {
             order: \.order,
             useReverseOrder: BeforeToolCallEventHandler.useReverseOrder
         )
+    }
+}
+
+/// A generic Tool output for a cancelled tool call
+public struct ToolOutputWrapper: ConvertibleToGeneratedContent {
+    static let schemaName = "ToolOutput"
+
+    public var generatedContent: GeneratedContent {
+        GeneratedContent(properties: [
+            "status": status,
+            "content": content.generatedContent,
+        ])
+    }
+
+    @Generable
+    enum Status {
+        case success
+        case error
+    }
+
+    let status: Status
+    let content: JSONValue
+    init(_ content: JSONValue, status: Status) {
+        self.content = content
+        self.status = .error
+    }
+
+    var segments: [Transcript.Segment] {
+        return [
+            .structure(
+                .init(
+                    schemaName: Self.schemaName,
+                    content: self.generatedContent
+                )
+            )
+        ]
     }
 }

@@ -104,7 +104,7 @@ extension JSONValue: ExpressibleByNilLiteral, ExpressibleByBooleanLiteral,
     }
 }
 
-extension JSONValue {
+extension JSONValue: ConvertibleToGeneratedContent {
     public static func from(generatedContent: GeneratedContent) throws
         -> JSONValue
     {

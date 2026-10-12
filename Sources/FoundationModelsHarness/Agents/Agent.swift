@@ -117,8 +117,9 @@ public final class Agent: Sendable {
         )
     }
 
-    public func addHook(_ hook: any HookEventHandler) {
-        self.hookRegistry.addHook(hook)
+    @discardableResult
+    public func addHook(_ hook: any HookEventHandler) -> HookID {
+        return self.hookRegistry.addHook(hook)
     }
 
     public func removeHook(_ id: HookID) {
@@ -150,7 +151,7 @@ public final class Agent: Sendable {
         defer {
             self.resetInvocationState()
         }
-        self.invocationState["internal"] = 123
+
         do {
             let response = try await session.respond(
                 to: prompt,
@@ -187,7 +188,7 @@ public final class Agent: Sendable {
     }
 
     private func retry(
-        for error: RetryError,
+        for error: RetryModelGenerationError,
         options: GenerationOptions,
         metadata: [String: any ConvertibleToGeneratedContent],
     ) async throws -> AgentResult {
@@ -209,7 +210,7 @@ public final class Agent: Sendable {
     /// Update tool calling mode based on the error to avoid infinite looping
     private func buildRetryGenerationOptions(
         _ options: GenerationOptions,
-        for error: RetryError
+        for error: RetryModelGenerationError
     ) -> GenerationOptions {
         var options = options
         switch error {
@@ -253,7 +254,7 @@ public final class Agent: Sendable {
     }
 
     private func retryStream(
-        for error: RetryError,
+        for error: RetryModelGenerationError,
         options: GenerationOptions,
         metadata: [String: any ConvertibleToGeneratedContent],
         session: LanguageModelSession,
@@ -410,11 +411,11 @@ extension Array where Element == Transcript.Segment {
 
 extension Error {
     var isRetryError: Bool {
-        return self.isError(RetryError.self)
+        return self.isError(RetryModelGenerationError.self)
     }
 
-    var retryError: RetryError? {
-        return self.error(RetryError.self)
+    var retryError: RetryModelGenerationError? {
+        return self.error(RetryModelGenerationError.self)
     }
 
     var delegatedError: DelegatedToolError? {
