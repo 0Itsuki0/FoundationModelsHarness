@@ -1,5 +1,14 @@
 # (WIP) Foundation Models Harness
 
+### Consider
+
+1. Wrap streamResponse and respond in try catch and never throw
+    - allow to yield after model call with error-ish stop reason and error so that the hook callback can better decide whether to retry or not
+2. Always programmatically invoke tools
+    - allow separate model call hooks and invocation hooks
+    - allow adding error field to tool result so that the hook callback can better decide whether to retry or not
+
+
 ### Current Progress
 
 1. Tool delegation

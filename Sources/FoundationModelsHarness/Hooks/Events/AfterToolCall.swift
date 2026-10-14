@@ -38,7 +38,13 @@ public struct AfterToolCallEventHandler: HookEventHandler {
         /// Read/write. Last-wins.
         public var retry: Bool = false
 
-        // TODO: - consider adding attemptCount similar to Strands' AfterModelCallEvent.attemptCount
+        /// 1-indexed count of model attempts for this turn, including the attempt
+        /// that just completed (or failed). The first call in a turn is `1`; each
+        /// subsequent retry increments by one.
+        /// Retry strategies may rely on `attemptCount === 1` to mark the start of a
+        /// new retry sequence (e.g. to clear per-turn state carried over from a
+        /// previous turn). The agent loop guarantees this marker on every fresh turn.
+        public let attemptCount: Int
 
         /// Set to a non-nil value to end the turn (agent loop) after this tool completes. (`JSONValue.null` will end the turn.)
         /// The value set here will become the final assistant message content directly.

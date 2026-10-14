@@ -11,30 +11,30 @@ import SwiftUI
 
 do {
     let agent = Agent(
-        tools: [.init(tool: GreetingTool(), delegate: false)],
+        tools: [.init(tool: GreetingTool(), delegate: true)],
         instruction: .init("You are a helpful assistant.")
     )
 
     agent.addHook(
-        BeforeInvocationEventHandler(callback: { event in
-            event.prompt.segments.append(
-                .text(.init(content: "Always start your response with ⭐."))
-            )
+        AfterToolCallEventHandler(callback: { event in
+//            if event.attemptCount <= 3 {
+//                event.retry = true
+//                return
+//            }
+            event.endTurn = "end!"
         })
     )
 
-    //    let response = try await agent.respond(to: "hello.")
+    let _ = try await agent.respond(to: "hello. greet itsuki.")
     //    print("response: ", response)
 
-        try await beforeToolCallHook(stream: true, example: .toolCallMutation)
-
     // testing stream
-//    try await printStream(agent.streamResponse(to: "hello. greet itsuki."))
-//    try await printStream(
-//        agent.streamResponse(to: "how's going?")
-//    )
-//
-//        printHistory(agent.transcript.history)
+    //    try await printStream(agent.streamResponse(to: "hello. greet itsuki."))
+    //    try await printStream(
+    //        agent.streamResponse(to: "how's going?")
+    //    )
+    //
+    printHistory(agent.transcript.history)
 
 } catch {
     print("error: ", error)

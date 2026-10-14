@@ -39,7 +39,12 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         /// Otherwise, when we throw a FakeError, the previous request from the user will also be lost.
         .transcriptErrorHandlingPolicy(.preserveTranscript)
         .onPrompt(perform: handleOnPrompt)
-        .onToolOutput(perform: handleOnToolOutput)
+        .onToolOutput { toolCall, toolOutput in
+            try await handleOnToolOutput(
+                toolCall: toolCall,
+                toolOutput: toolOutput
+            )
+        }
         .onToolCall(perform: handleOnToolCall)
         .onResponse(perform: handleOnResponse)
     }
@@ -117,12 +122,14 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
     }
 
     // TODO: -
+
     private func handleOnToolOutput(
         toolCall: Transcript.ToolCall,
-        toolOutput: Transcript.ToolOutput
+        toolOutput: Transcript.ToolOutput,
+        attemptCount: Int = 1
     ) async throws {
         /// `history` will contains the last Transcript.ToolCalls entry but should **NOT** contain the `Transcript.ToolOutput`
-        /// However, still do a double check here.
+        /// However, still do a defensive filtering here.
         var historyBeforeOutput = history
         historyBeforeOutput.removeAll {
             $0.asToolOutput != nil && $0.id == toolOutput.id
@@ -132,11 +139,58 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         var event = AfterToolCallEventHandler.EventPayload(
             toolCall: toolCall,
             toolOutput: toolOutput,
-            agent: createLocalAgent(with: historyBeforeOutput)
+            agent: createLocalAgent(with: historyBeforeOutput),
+            attemptCount: max(1, attemptCount)
         )
+
         for handler in handlers {
             try await handler.callback(&event)
         }
+
+        // TODO: - handle event.toolOutput change
+
+        /// Retry Tool call. last-wins.
+        if event.retry {
+            return try await retryToolCall(toolCall, attemptCount: attemptCount)
+        }
+
+        /// Short-circuit to the output with the `endTurn` value
+        if let endTurn = event.endTurn {
+            /// programmatically append tool output to history
+            self.history.append(.toolOutput(event.toolOutput))
+
+            /// programmatically append `endTurn` as model response to history
+            let response = Transcript.Response(
+                segments: SegmentBuilder.segments(
+                    from: endTurn,
+                    schemaName: "GeneratedContent"
+                )
+            )
+            self.history.append(.response(response))
+
+            /// programmatically trigger `onResponse`
+            try await self.handleOnResponse(response)
+
+            /// throw `ResponseFinishedError` to break out of the agent loop
+            throw ResponseFinishedError(response)
+        }
+    }
+
+    private func retryToolCall(
+        _ toolCall: Transcript.ToolCall,
+        attemptCount: Int
+    ) async throws {
+        let tool = try getTool(for: toolCall)
+
+        /// **Programmatically** call the wrapper tool.
+        let outputTranscript = try await callTool(for: toolCall, using: tool)
+
+        /// programmatically triggers the `onToolOutput` Event
+        try await self.handleOnToolOutput(
+            toolCall: toolCall,
+            toolOutput: outputTranscript,
+            attemptCount: attemptCount + 1
+        )
     }
 
     /// Handle Tool calls on the Profile.
@@ -243,19 +297,7 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         async throws
     {
         /// since the `invocableTool` is a wrapper around the `tool` passing in, both share the same arguments, output, schema, name
-        guard
-            let tool = self.tools.first(where: {
-                $0.invocableTool.name == toolCall.toolName
-            })?.invocableTool
-        else {
-            throw LanguageModelError.refusal(
-                .init(
-                    explanation: "Tool \(toolCall.toolName) is not registered.",
-                    debugDescription:
-                        "Register \(toolCall.toolName) and try again."
-                )
-            )
-        }
+        let tool = try getTool(for: toolCall)
 
         var calls = toolCalls.expand()
 
@@ -283,18 +325,7 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         /// This is needed because even if we have modified the session history with the new toolCall Parameter,
         /// (aka: history = historyTemp)
         /// the model will still use the previous tool name / arguments.
-        let toolOutput = try await tool.call(
-            arguments: toolCall.arguments
-        )
-
-        let outputTranscript = await Transcript.ToolOutput(
-            id: toolCall.id,
-            toolName: toolCall.toolName,
-            segments: self.toolOutputSegments(
-                from: toolOutput,
-                schemaName: tool.parameters.name
-            )
-        )
+        let outputTranscript = try await callTool(for: toolCall, using: tool)
 
         /// programmatically triggers the `onToolOutput` Event
         try await self.handleOnToolOutput(
@@ -312,6 +343,48 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
 
         /// throw retry error to force the model to generate a response based on the tool output.
         throw RetryModelGenerationError.afterToolOutput
+    }
+
+    private func getTool(for toolCall: Transcript.ToolCall) throws
+        -> InvocableTool
+    {
+        guard
+            let tool = self.tools.first(where: {
+                $0.invocableTool.name == toolCall.toolName
+            })?.invocableTool
+        else {
+            throw LanguageModelError.refusal(
+                .init(
+                    explanation: "Tool \(toolCall.toolName) is not registered.",
+                    debugDescription:
+                        "Register \(toolCall.toolName) and try again."
+                )
+            )
+        }
+        return tool
+    }
+
+    /// **Programmatically** call the wrapper tool
+    private func callTool(
+        for toolCall: Transcript.ToolCall,
+        using tool: InvocableTool
+    ) async throws
+        -> Transcript.ToolOutput
+    {
+        let toolOutput = try await tool.call(
+            arguments: toolCall.arguments
+        )
+
+        let outputTranscript = await Transcript.ToolOutput(
+            id: toolCall.id,
+            toolName: toolCall.toolName,
+            segments: self.toolOutputSegments(
+                from: toolOutput,
+                schemaName: tool.parameters.name
+            )
+        )
+
+        return outputTranscript
     }
 
     private func createLocalAgent(with history: Transcript.HistoryView)

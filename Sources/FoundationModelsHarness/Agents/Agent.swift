@@ -113,7 +113,10 @@ public final class Agent: Sendable {
                 callback: { [weak self] event in
                     guard let self else { return }
                     if isDelegatedTool(event.toolCall.toolName) {
-                        throw DelegatedToolError(event.toolOutput)
+                        event.endTurn = try JSONValue(
+                            event.toolOutput.segments.rawGeneratedContent
+                        )
+                        return
                     }
                 },
                 options: .init(order: BuiltInHookOrder.sdkLast.rawValue)
@@ -180,16 +183,6 @@ public final class Agent: Sendable {
                 before: beforeCallUsage,
                 after: session.usage
             )
-
-            if let error = error.delegatedError {
-                let response = addDelegatedToolOutput(error.toolOutput)
-                return AgentResult(
-                    stopReason: .endTurn,
-                    lastMessage: response,
-                    invocationState: invocationState,
-                    usage: usage
-                )
-            }
 
             if let error = error.responseFinishError {
                 /// history already contains the response. returning it directly.
@@ -367,17 +360,6 @@ public final class Agent: Sendable {
                 before: beforeCallUsage,
                 after: session.usage
             )
-            if let error = error.delegatedError {
-                addDelegatedToolOutput(error.toolOutput)
-                continuation.yield(
-                    .init(
-                        segments: error.toolOutput.segments,
-                        usage: usage
-                    )
-                )
-                continuation.finish()
-                return
-            }
 
             if let error = error.responseFinishError {
                 /// `history` already contains the response. Don't need to add anything.
@@ -408,25 +390,6 @@ public final class Agent: Sendable {
             continuation.finish(throwing: error)
         }
 
-    }
-
-    @discardableResult
-    private func addDelegatedToolOutput(
-        _ output: Transcript.ToolOutput
-    ) -> Transcript.Response {
-        // NOTE: Inserting a tool output is not necessary
-        // aka: ToolCalls -> Response directly will not cause any error on the next generation using the transcript history,
-        // but adding it here so that each tool call can be paired with an output
-        if !session.transcript.history.contains(where: { $0.id == output.id }) {
-            session.transcript.history.append(
-                .toolOutput(output)
-            )
-        }
-        let response = Transcript.Response(segments: output.segments)
-        session.transcript.history.append(
-            .response(response)
-        )
-        return response
     }
 }
 
@@ -482,10 +445,6 @@ extension Error {
 
     var retryError: RetryModelGenerationError? {
         return self.error(RetryModelGenerationError.self)
-    }
-
-    var delegatedError: DelegatedToolError? {
-        return self.error(DelegatedToolError.self)
     }
 
     var responseFinishError: ResponseFinishedError? {
