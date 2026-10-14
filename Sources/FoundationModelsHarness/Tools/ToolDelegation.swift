@@ -7,7 +7,7 @@
 
 import FoundationModels
 
-// Internal *fake* error only used for custom model invocation / tool use / response handling
+/// Internal *fake* error only used for custom model invocation / tool use / response handling
 protocol FakeError: Error, Sendable {}
 
 struct DelegatedToolError: FakeError {
@@ -17,5 +17,3 @@ struct DelegatedToolError: FakeError {
         self.toolOutput = toolOutput
     }
 }
-
-

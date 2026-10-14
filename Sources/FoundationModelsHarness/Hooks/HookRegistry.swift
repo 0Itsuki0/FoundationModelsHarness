@@ -7,65 +7,83 @@
 
 import Foundation
 
-struct HookRegistry {
-    private var _afterToolCallHandlers: [AfterToolCallEventHandler]
-    private(set) var afterToolCallHandlers: [AfterToolCallEventHandler] {
-        get {
-            return _afterToolCallHandlers.sortedByHookOrder
-        }
-        set {
-            _afterToolCallHandlers = newValue
-        }
+@propertyWrapper
+struct HookOrdered<T: HookEventHandler> {
+    private var handlers: [T] = []
+
+    init(_ handlers: [T]) {
+        self.wrappedValue = handlers
     }
 
-    private var _beforeToolCallHandlers: [BeforeToolCallEventHandler]
-    private(set) var beforeToolCallHandlers: [BeforeToolCallEventHandler] {
-        get {
-            return _beforeToolCallHandlers.sortedByHookOrder
-        }
-        set {
-            _beforeToolCallHandlers = newValue
-        }
+    init(wrappedValue: [T]) {
+        self.wrappedValue = wrappedValue
     }
+
+    var wrappedValue: [T] {
+        get {
+            return handlers.sortedByHookOrder(
+                order: \.order,
+                useReverseOrder: T.useReverseOrder
+            )
+        }
+        set { handlers = newValue }
+    }
+}
+
+struct HookRegistry {
+    // MARK: - Before Event
+    @HookOrdered
+    private(set) var beforeModelCallHandlers: [BeforeModelCallEventHandler]
+
+    @HookOrdered
+    private(set) var beforeToolCallHandlers: [BeforeToolCallEventHandler]
+
+    // MARK: - After Event
+    @HookOrdered
+    private(set) var afterToolCallHandlers: [AfterToolCallEventHandler]
 
     init(
-        afterToolCallHandlers: [AfterToolCallEventHandler],
-        beforeToolCallHandlers: [BeforeToolCallEventHandler]
+        beforeModelCallHandlers: [BeforeModelCallEventHandler] = [],
+        beforeToolCallHandlers: [BeforeToolCallEventHandler] = [],
+        afterToolCallHandlers: [AfterToolCallEventHandler] = [],
     ) {
-        self._afterToolCallHandlers = afterToolCallHandlers
-        self._beforeToolCallHandlers = beforeToolCallHandlers
-    }
-
-    init() {
-        self._afterToolCallHandlers = []
-        self._beforeToolCallHandlers = []
+        self.beforeModelCallHandlers = beforeModelCallHandlers
+        self.beforeToolCallHandlers = beforeToolCallHandlers
+        self.afterToolCallHandlers = afterToolCallHandlers
     }
 
     @discardableResult
     mutating func addHook(_ hook: any HookEventHandler) -> HookID {
-        if let hook = hook as? AfterToolCallEventHandler {
-            self._afterToolCallHandlers.append(hook)
+        if let hook = hook as? BeforeModelCallEventHandler {
+            self.beforeModelCallHandlers.append(hook)
         }
 
         if let hook = hook as? BeforeToolCallEventHandler {
-            self._beforeToolCallHandlers.append(hook)
+            self.beforeToolCallHandlers.append(hook)
+        }
+
+        if let hook = hook as? AfterToolCallEventHandler {
+            self.afterToolCallHandlers.append(hook)
         }
 
         return hook.id
     }
 
     mutating func removeHook(_ id: HookID) {
-        self._afterToolCallHandlers.remove(id)
-        self._beforeToolCallHandlers.remove(id)
+        self.beforeModelCallHandlers.remove(id)
+        self.beforeToolCallHandlers.remove(id)
+        self.afterToolCallHandlers.remove(id)
     }
 
     mutating func removeHooks(for types: Set<HookEventType>) {
         for type in types {
             switch type {
-            case .afterToolCall:
-                self._afterToolCallHandlers.removeAll()
+            case .beforeModelCall:
+                self.beforeModelCallHandlers.removeAll()
             case .beforeToolCall:
-                self._beforeToolCallHandlers.removeAll()
+                self.beforeToolCallHandlers.removeAll()
+            case .afterToolCall:
+                self.afterToolCallHandlers.removeAll()
             }
         }
     }

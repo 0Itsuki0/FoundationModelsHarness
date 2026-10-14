@@ -8,6 +8,8 @@
 import FoundationModels
 
 public struct AfterToolCallEventHandler: HookEventHandler {
+    static public let eventType: HookEventType = .afterToolCall
+
     public let id = HookID()
 
     public struct EventPayload: Sendable {
@@ -20,8 +22,6 @@ public struct AfterToolCallEventHandler: HookEventHandler {
         // strands-ts/src/agent/agent.ts: line 1784
     }
 
-    static public let eventType: HookEventType = .afterToolCall
-
     /// the error thrown will be propagated up directly to the `respond` or `streamResponse`.
     public let callback: @Sendable (inout EventPayload) async throws -> Void
     public let options: HookCallbackOptions?
@@ -32,14 +32,5 @@ public struct AfterToolCallEventHandler: HookEventHandler {
     ) {
         self.callback = callback
         self.options = options
-    }
-}
-
-extension Array where Element == AfterToolCallEventHandler {
-    var sortedByHookOrder: [Element] {
-        self.sortedByHookOrder(
-            order: \.order,
-            useReverseOrder: AfterToolCallEventHandler.useReverseOrder
-        )
     }
 }

@@ -16,6 +16,8 @@ import FoundationModels
 ///   input or name before execution.
 ///   The `name` has to be one of the registered tools. If it  is changed, a different tool will be called.
 public struct BeforeToolCallEventHandler: HookEventHandler {
+    static public let eventType: HookEventType = .beforeToolCall
+
     public let id = HookID()
 
     public struct EventPayload: Sendable {
@@ -25,7 +27,11 @@ public struct BeforeToolCallEventHandler: HookEventHandler {
         ///
         /// - Mutate `toolCall` in place, or replace it wholesale, to rewrite the tool
         ///   input or name before execution.
-        ///   The `name` has to be one of the registered tools. If it  is changed, a different tool will be called.
+        ///   The `name` has to be one of the registered tools. If it  is changed, a different tool will be called.'
+        ///
+        /// **NOTE**:
+        /// Modification is last-win.
+        /// If a later `BeforeToolCallEventHandler` modifies the `toolCall` , that one will be the one executed.
         public var toolCall: Transcript.ToolCall
 
         /// All tools being called in the current turn including the one triggers the event
@@ -49,10 +55,15 @@ public struct BeforeToolCallEventHandler: HookEventHandler {
         /// where the `content` is the value set on the `cancel`,  and the `status` being `Status.error`.
         ///
         /// `AfterToolCall` hook will be triggered with the `Transcript.ToolOutput` created above.
+        ///
+        /// **NOTE**:
+        /// Setting `cancel` do NOT prevent the remaining `BeforeToolCallEventHandler` from being called.
+        /// - Later callbacks see the cancel. They get the same event object, so they can read event.cancel and skip their own work with
+        /// something like if (event.cancel) return.
+        /// - Later callbacks can undo the cancel
+        /// - Later callback can change the cancel value (message used as the tool output)
         public var cancel: JSONValue? = nil
     }
-
-    static public let eventType: HookEventType = .beforeToolCall
 
     /// the error thrown will be propagated up directly to the `respond` or `streamResponse`.
     public let callback: @Sendable (inout EventPayload) async throws -> Void
@@ -64,15 +75,6 @@ public struct BeforeToolCallEventHandler: HookEventHandler {
     ) {
         self.callback = callback
         self.options = options
-    }
-}
-
-extension Array where Element == BeforeToolCallEventHandler {
-    var sortedByHookOrder: [Element] {
-        self.sortedByHookOrder(
-            order: \.order,
-            useReverseOrder: BeforeToolCallEventHandler.useReverseOrder
-        )
     }
 }
 
@@ -101,13 +103,9 @@ public struct ToolOutputWrapper: ConvertibleToGeneratedContent {
     }
 
     var segments: [Transcript.Segment] {
-        return [
-            .structure(
-                .init(
-                    schemaName: Self.schemaName,
-                    content: self.generatedContent
-                )
-            )
-        ]
+        return SegmentBuilder.segments(
+            from: self.generatedContent,
+            schemaName: Self.schemaName
+        )
     }
 }

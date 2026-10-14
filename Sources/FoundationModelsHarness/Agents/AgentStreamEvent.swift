@@ -9,28 +9,53 @@ import FoundationModels
 
 /// - `delegatedToolOutput` - Delegated tool output
 /// - `contentUpdate` - streaming event from the model
-public enum AgentStreamEvent: Sendable {
-    case contentUpdate(
-        rawContent: GeneratedContent,
-        usage: LanguageModelSession.Usage
-    )
-    case delegatedToolOutput(Transcript.ToolOutput)
-    
+public struct AgentStreamEvent: Sendable {
+    public var rawContent: GeneratedContent
+    public var usage: LanguageModelSession.Usage
+
     public func structuredContent<Value>(_ type: Value.Type = Value.self)
-    -> Value?
+        -> Value?
     where Value: ConvertibleFromGeneratedContent {
-        guard case .contentUpdate(let rawContent, _) = self else {
-            return nil
-        }
         return try? rawContent.value()
     }
-    
+
     public var text: String {
-        switch self {
-        case .contentUpdate(let rawContent, _):
-            rawContent.jsonString
-        case .delegatedToolOutput(let output):
-            output.segments.rawContent
-        }
+        rawContent.jsonString
     }
+
+    init(rawContent: GeneratedContent, usage: LanguageModelSession.Usage) {
+        self.rawContent = rawContent
+        self.usage = usage
+    }
+
+    init(segments: [Transcript.Segment], usage: LanguageModelSession.Usage) {
+        self.init(
+            rawContent: segments.rawGeneratedContent,
+            usage: usage
+        )
+    }
+
+}
+
+extension Array where Element == Transcript.Segment {
+    var rawContent: String {
+        return self.compactMap { segment -> String? in
+            switch segment {
+            case .text(let text):
+                text.content.isEmpty ? nil : text.content
+            case .structure(let structure):
+                structure.content.jsonString
+            case .attachment(_):
+                nil
+            @unknown default:
+                nil
+            }
+        }.joined(separator: "\n")
+    }
+
+    var rawGeneratedContent: GeneratedContent {
+        return (try? GeneratedContent(json: self.rawContent))
+            ?? GeneratedContent(kind: .string(self.rawContent))
+    }
+
 }

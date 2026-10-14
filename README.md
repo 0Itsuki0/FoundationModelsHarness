@@ -140,3 +140,36 @@ await createHarness({
 
 ```
 
+
+
+#### Stop Reason vs throwing:
+
+| Stop reason | Who decided to stop |
+|---|---|
+| `endTurn`, `stopSequence`, `toolUse` | The model, normal completion |
+| `refusal`, `contentFiltered`, `guardrailIntervened` | The model or provider, passed straight through (`models/bedrock.ts:122`,
+`models/anthropic.ts:973`) |
+| `limitTurns`, `limitTotalTokens`, `limitOutputTokens` | The caller, via `limits` (`agent.ts:926`) |
+| `cancelled` | The caller, via `agent.cancel()`. A `CancelledError` is thrown internally but caught and turned into a result
+(`errors.ts:236`) |
+| `interrupt`, `checkpoint` | The caller or a hook, deliberately pausing |
+
+  
+  Even the provider "error-ish" ones (refusal, content filter, guardrail) come back as results, because the model still produced a
+  coherent final message.
+
+  It throws when there's no usable result, or continuing would leave the state broken:
+
+  - MaxTokensError (models/model.ts:630): the reply was cut off mid-generation, and a tool call's input may be incomplete. The
+    partial message is attached to the error, not added to the conversation.
+  - ContextWindowOverflowError: the request never ran, so there's no reply at all.
+  - ModelError('unable to parse tool input JSON') (models/model.ts:636): the tool call can't be executed.
+  - StructuredOutputError (agent.ts:1656): the caller asked for a schema and the model never produced one, so the promised result
+    type can't be returned.
+  - ConcurrentInvocationError, ToolValidationError: the call itself was invalid.
+
+  In one line: a stop reason means "the run ended; here's a valid final message and the conversation is intact." A throw means
+  "there's no valid result to hand back."
+
+  Where it's inconsistent: maxTokens and modelContextWindowExceeded are both members of the StopReason type, but the SDK throws in
+  both cases instead of returning them. So they're listed as possible stop reasons that never actually come back from the agent.

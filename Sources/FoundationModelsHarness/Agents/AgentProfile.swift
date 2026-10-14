@@ -39,31 +39,84 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         /// Otherwise, when we throw a FakeError, the previous request from the user will also be lost.
         .transcriptErrorHandlingPolicy(.preserveTranscript)
         .onPrompt { prompt in
-            /// history will contain the prompt as its last entry
-            /// modifying the history here directly will effect what the model sees (respond to),
-            /// which is different from modifying the tool call in onToolCall where the model will NOT see the updated tool call parameters.
 
-            /// Use it for context injection & BeforeModelCall event for prompt transformation
-            /// TODO: add context injection / BeforeModelCall hook
-            print("on prompt")
-            print(history)
             /// remove the dummy empty prompt added when calling `responseStream`/`respond` used to force the retry from the updated history
             /// This will work as long as the transcript ends with prompt / tool output entry,
             /// which is indeed the case here.
             history.removeDummyPrompt()
+
             /// Internal Retry. Return early. No Hook triggered.
             if isInternalRetry {
                 return
             }
+
+            /// history will contain the prompt as its last entry
+            ///
+            /// NOTE: **Not** modifying history directly at the start
+            /// so that in the case where handler throws
+            /// we still have a clean history (managed by the FoundationModels SDK. Untouched)
+            var historyBeforePrompt: Transcript.HistoryView = history
+            historyBeforePrompt.removeAll { $0.id == prompt.id }
+
+            let handlers = hookRegistry.beforeModelCallHandlers
+            var event = BeforeModelCallEventHandler.EventPayload(
+                prompt: prompt,
+                agent: createLocalAgent(with: historyBeforePrompt)
+            )
+
+            for handler in handlers {
+                try await handler.callback(&event)
+            }
+
+            /// Model call cancelled with a cancelled content. last-wins.
+            if let cancel = event.cancel {
+                let response = Transcript.Response(
+                    segments: SegmentBuilder.segments(
+                        from: cancel,
+                        schemaName: "GeneratedContent"
+                    )
+                )
+
+                /// Add the response entry to the history.
+                ///
+                /// Doing this before calling the `handleOnResponse` because
+                /// the when `onResponse` is triggered by the system,
+                /// the `history` will contains the last `Transcript.Response`
+                self.history.append(.response(response))
+
+                /// programmatically triggers the `onResponse` Event
+                try await self.handleOnResponse(response)
+
+                throw ResponseFinishedError(response)
+            }
+
+            /// No changes to the tool Call. Return early.
+            guard prompt != event.prompt else {
+                return
+            }
+
+            /// Prompt modified. Last-wins
+            ///
+            /// NOTE: modifying the history here directly will indeed effect what the model sees (respond to),
+            /// which is different from modifying the tool call in onToolCall where the model will NOT see the updated tool call parameters.
+            self.history = historyBeforePrompt + [.prompt(event.prompt)]
         }
         .onToolOutput(perform: handleOnToolOutput)
         .onToolCall(perform: handleOnToolCall)
+        .onResponse(perform: handleOnResponse)
+    }
+
+    private func handleOnResponse(_ response: Transcript.Response) async throws
+    {
+        /// `history` will contains the last `Transcript.Response`
+
     }
 
     private func handleOnToolOutput(
-        _ toolCall: Transcript.ToolCall,
+        toolCall: Transcript.ToolCall,
         toolOutput: Transcript.ToolOutput
     ) async throws {
+        /// `history` will contains the last Transcript.ToolCalls entry but **NOT** the `Transcript.ToolOutput`
         let handlers = hookRegistry.afterToolCallHandlers
         var event = AfterToolCallEventHandler.EventPayload(
             toolCall: toolCall,
@@ -109,7 +162,7 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
             try await handler.callback(&event)
         }
 
-        /// Tool call cancelled with a cancelled content
+        /// Tool call cancelled with a cancelled content. last-wins.
         if let cancel = event.cancel {
             return try await handleToolCallCancelled(cancel, on: toolCall)
         }
@@ -119,6 +172,7 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
             return
         }
 
+        /// Handle tool input / name changes. last-wins.
         try await self.handleToolCallUpdated(
             toolCalls: lastToolCallsEvent,
             previousId: toolCall.id,
@@ -141,13 +195,16 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
             segments: toolOutput.segments
         )
 
-        /// programmatically triggers the onToolOutput Event
+        /// programmatically triggers the `onToolOutput` Event
         try await self.handleOnToolOutput(
-            toolCall,
+            toolCall: toolCall,
             toolOutput: outputTranscript
         )
 
         /// Add in the tool output to the session's history
+        ///
+        /// NOTE: do this *after* the `handleOnToolOutput` because for the `onToolOutput` triggered by the system,
+        /// the `history` will contains the last Transcript.ToolCalls entry but **NOT** the `Transcript.ToolOutput`
         self.history.append(
             .toolOutput(outputTranscript)
         )
@@ -228,13 +285,16 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
             )
         )
 
-        /// programmatically triggers the onToolOutput Event
+        /// programmatically triggers the `onToolOutput` Event
         try await self.handleOnToolOutput(
-            toolCall,
+            toolCall: toolCall,
             toolOutput: outputTranscript
         )
 
         /// Add in the tool output to the session's history
+        ///
+        /// NOTE: do this *after* the `handleOnToolOutput` because for the `onToolOutput` triggered by the system,
+        /// the `history` will contains the last Transcript.ToolCalls entry but **NOT** the `Transcript.ToolOutput`
         self.history.append(
             .toolOutput(outputTranscript)
         )
@@ -253,72 +313,17 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         )
     }
 
-    /// Create segments mirroring how system handles it.
-    private func segments(
-        from generatedContent: GeneratedContent,
-        schemaName: String
-    ) -> [Transcript.Segment] {
-        switch generatedContent.kind {
-        case .null:
-            return [
-                .structure(
-                    .init(
-                        schemaName: schemaName,
-                        content: generatedContent
-                    )
-                )
-            ]
-        case .bool(let value):
-            return [.text(.init(content: String(value)))]
-        case .number(let value):
-            return [.text(.init(content: String(value)))]
-        case .string(let value):
-            return [.text(.init(content: value))]
-        case .array(let value):
-            return value.flatMap {
-                segments(from: $0, schemaName: schemaName)
-            }
-        case .structure(_, _):
-            return [
-                .structure(
-                    .init(
-                        schemaName: schemaName,
-                        content: generatedContent
-                    )
-                )
-            ]
-        @unknown default:
-            return [
-                .structure(
-                    .init(
-                        schemaName: schemaName,
-                        content: generatedContent
-                    )
-                )
-            ]
-
-        }
-    }
-
-    func segments(from instructions: InstructionsRepresentable)
-        -> [Transcript.Segment]
-    {
-        let session = LanguageModelSession(
-            instructions: instructions.instructionsRepresentation
-        )
-        return session.transcript.compactMap { $0.asInstruction }.first?
-            .segments ?? []
-    }
-
     func toolOutputSegments(
         from output: InvocableTool.Output,
         schemaName: String
     ) async -> [Transcript.Segment] {
         let output = output.output
-        let segments = await self.segments(from: output.promptRepresentation)
+        let segments = await SegmentBuilder.segments(
+            from: output.promptRepresentation
+        )
         if segments.isEmpty {
             if let generatedContent = output as? ConvertibleToGeneratedContent {
-                return self.segments(
+                return SegmentBuilder.segments(
                     from: GeneratedContent(generatedContent),
                     schemaName: schemaName
                 )
@@ -328,39 +333,6 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
 
         return segments
     }
-
-    /// PromptRepresentable:
-    /// Inheritance: ConvertibleToGeneratedContent, Generable
-    /// conformance type: ImageReference, Attachment, GeneratedContent, Prompt
-    func segments(from prompt: PromptRepresentable) async -> [Transcript
-        .Segment]
-    {
-        /// ConvertibleToGeneratedContent, Generable, ImageReference, Attachment, GeneratedContent
-        /// all conforms to InstructionsRepresentable and will be handled here.
-        if let instructions = prompt as? InstructionsRepresentable {
-            return segments(from: instructions)
-        }
-
-        let profile = LanguageModelSession.Profile {}.onPrompt {
-            throw PromptReceived(prompt: $0)
-        }
-
-        let session = LanguageModelSession(profile: profile)
-        /// make sure the prompt is preserved even when there is an error calling the model
-        session.transcriptErrorHandlingPolicy = .preserveTranscript
-        let prompt = prompt.promptRepresentation
-        do {
-            let _ = try await session.respond(to: prompt)
-        } catch {
-            if let error = error as? PromptReceived {
-                return error.prompt.segments
-            }
-        }
-        /// fallback if the PromptReceived is never caught
-        return session.transcript.history.compactMap { $0.asPrompt }.first?
-            .segments ?? []
-    }
-
 }
 
 enum RetryModelGenerationError: FakeError, Equatable, Hashable {
@@ -395,6 +367,10 @@ extension Transcript.Entry {
     }
 }
 
-private struct PromptReceived: Error {
-    let prompt: Transcript.Prompt
+struct ResponseFinishedError: FakeError {
+    let response: Transcript.Response
+
+    init(_ response: Transcript.Response) {
+        self.response = response
+    }
 }

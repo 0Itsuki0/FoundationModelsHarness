@@ -7,6 +7,7 @@
 
 import Foundation
 
+// TODO: - add other types
 /// https://strandsagents.com/docs/user-guide/sdk/agents/hooks-events/#available-events
 public enum HookEventType: Sendable, Hashable, Equatable {
     /// Triggered after tool invocation completes. Uses reverse callback ordering
@@ -14,14 +15,14 @@ public enum HookEventType: Sendable, Hashable, Equatable {
     /// Triggered just before a tool is executed, aka: before `Tool.call(arguments:)` is called.
     case beforeToolCall
 
+    /// Triggered just before the model is invoked, aka: before messages are sent to the model for inference
+    case beforeModelCall
+
     var useReverseOrder: Bool {
         switch self {
-        case .afterToolCall:
-            true
+        case .beforeModelCall: false
         case .beforeToolCall: false
+        case .afterToolCall: true
         }
     }
 }
-
-// TODO: - add other types
-// before model call, before invocation, after invocation

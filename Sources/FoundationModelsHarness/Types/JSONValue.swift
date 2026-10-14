@@ -104,7 +104,62 @@ extension JSONValue: ExpressibleByNilLiteral, ExpressibleByBooleanLiteral,
     }
 }
 
-extension JSONValue: ConvertibleToGeneratedContent {
+extension JSONValue {
+    public func value<Value>(
+        _ type: Value.Type = Value.self,
+        forProperty property: String
+    ) throws -> Value where Value: ConvertibleFromGeneratedContent {
+        return try self.generatedContent.value(forProperty: property)
+    }
+
+    public func value<Value>(
+        _ type: Value?.Type = Value?.self,
+        forProperty property: String
+    ) throws -> Value? where Value: ConvertibleFromGeneratedContent {
+        return try self.generatedContent.value(forProperty: property)
+    }
+
+    public func value<Value>(_ type: Value.Type = Value.self) throws -> Value
+    where Value: ConvertibleFromGeneratedContent {
+        return try self.generatedContent.value()
+    }
+
+    public func asString() -> String? {
+        if case .string(let value) = self {
+            return value
+        }
+        return nil
+    }
+
+    public func asBool() -> Bool? {
+        if case .bool(let value) = self {
+            return value
+        }
+        return nil
+    }
+
+    public func asInt() -> Int? {
+        if case .number(let value) = self {
+            return Int(value)
+        }
+        return nil
+    }
+
+    public func asFloat() -> Double? {
+        if case .number(let value) = self {
+            return value
+        }
+        return nil
+    }
+}
+
+extension JSONValue: ConvertibleToGeneratedContent,
+    ConvertibleFromGeneratedContent
+{
+    public init(_ content: GeneratedContent) throws {
+        self = try JSONValue.from(generatedContent: content)
+    }
+
     public static func from(generatedContent: GeneratedContent) throws
         -> JSONValue
     {

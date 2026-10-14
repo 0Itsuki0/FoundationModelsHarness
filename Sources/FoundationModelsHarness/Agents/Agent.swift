@@ -152,6 +152,8 @@ public final class Agent: Sendable {
             self.resetInvocationState()
         }
 
+        let beforeCallUsage = session.usage
+
         do {
             let response = try await session.respond(
                 to: prompt,
@@ -161,17 +163,37 @@ public final class Agent: Sendable {
                 self.session.lastResponse
                 ?? .init(segments: [.text(.init(content: response.content))])
             return AgentResult(
-                stopReason: .modelOutput,
+                stopReason: .endTurn,
                 lastMessage: entry,
-                invocationState: invocationState
+                invocationState: invocationState,
+                usage: calculateTurnUsage(
+                    before: beforeCallUsage,
+                    after: session.usage
+                )
             )
         } catch {
+            let usage = calculateTurnUsage(
+                before: beforeCallUsage,
+                after: session.usage
+            )
+
             if let error = error.delegatedError {
                 let response = addDelegatedToolOutput(error.toolOutput)
                 return AgentResult(
-                    stopReason: .delegatedToolOutput,
+                    stopReason: .endTurn,
                     lastMessage: response,
-                    invocationState: invocationState
+                    invocationState: invocationState,
+                    usage: usage
+                )
+            }
+
+            if let error = error.responseFinishError {
+                /// history already contains the response. returning it directly.
+                return AgentResult(
+                    stopReason: .endTurn,
+                    lastMessage: error.response,
+                    invocationState: invocationState,
+                    usage: usage
                 )
             }
 
@@ -192,7 +214,6 @@ public final class Agent: Sendable {
         options: GenerationOptions,
         metadata: [String: any ConvertibleToGeneratedContent],
     ) async throws -> AgentResult {
-        print(#function)
         self.isInternalRetry = true
         defer {
             self.isInternalRetry = false
@@ -204,6 +225,26 @@ public final class Agent: Sendable {
             to: "",
             options: buildRetryGenerationOptions(options, for: error),
             metadata: buildRetryMetadata(metadata)
+        )
+    }
+
+    private func calculateTurnUsage(
+        before: LanguageModelSession.Usage,
+        after: LanguageModelSession.Usage
+    ) -> LanguageModelSession.Usage {
+        return LanguageModelSession.Usage(
+            input: .init(
+                totalTokenCount: after.input.totalTokenCount
+                    - before.input.totalTokenCount,
+                cachedTokenCount: after.input.cachedTokenCount
+                    - before.input.cachedTokenCount
+            ),
+            output: .init(
+                totalTokenCount: after.output.totalTokenCount
+                    - before.output.totalTokenCount,
+                reasoningTokenCount: after.output.reasoningTokenCount
+                    - before.output.reasoningTokenCount
+            )
         )
     }
 
@@ -247,7 +288,8 @@ public final class Agent: Sendable {
                     metadata: metadata,
                     session: session,
                     resetInvocationState: resetInvocationState,
-                    streamingInto: continuation
+                    beforeCallUsage: session.usage,
+                    streamingInto: continuation,
                 )
             }
         }
@@ -259,10 +301,10 @@ public final class Agent: Sendable {
         metadata: [String: any ConvertibleToGeneratedContent],
         session: LanguageModelSession,
         resetInvocationState: () -> Void,
+        beforeCallUsage: LanguageModelSession.Usage,
         streamingInto continuation: AsyncThrowingStream<AgentStreamEvent, Error>
             .Continuation
     ) async {
-        print(#function)
         self.isInternalRetry = true
         defer {
             self.isInternalRetry = false
@@ -278,6 +320,7 @@ public final class Agent: Sendable {
             metadata: buildRetryMetadata(metadata),
             session: session,
             resetInvocationState: resetInvocationState,
+            beforeCallUsage: session.usage,
             streamingInto: continuation
         )
     }
@@ -288,6 +331,7 @@ public final class Agent: Sendable {
         metadata: [String: any ConvertibleToGeneratedContent],
         session: LanguageModelSession,
         resetInvocationState: () -> Void,
+        beforeCallUsage: LanguageModelSession.Usage,
         streamingInto continuation: AsyncThrowingStream<AgentStreamEvent, Error>
             .Continuation
     ) async {
@@ -300,10 +344,14 @@ public final class Agent: Sendable {
                 to: prompt,
                 metadata: metadata
             ) {
+                /// the `calculateTurnUsage` is essentially the same as `snapshot.usage`in this case
                 continuation.yield(
-                    .contentUpdate(
+                    .init(
                         rawContent: snapshot.rawContent,
-                        usage: snapshot.usage
+                        usage: calculateTurnUsage(
+                            before: beforeCallUsage,
+                            after: session.usage
+                        )
                     )
                 )
             }
@@ -311,10 +359,29 @@ public final class Agent: Sendable {
             return
 
         } catch {
+            let usage = calculateTurnUsage(
+                before: beforeCallUsage,
+                after: session.usage
+            )
             if let error = error.delegatedError {
                 addDelegatedToolOutput(error.toolOutput)
                 continuation.yield(
-                    .delegatedToolOutput(error.toolOutput)
+                    .init(
+                        segments: error.toolOutput.segments,
+                        usage: usage
+                    )
+                )
+                continuation.finish()
+                return
+            }
+
+            if let error = error.responseFinishError {
+                /// `history` already contains the response. Don't need to add anything.
+                continuation.yield(
+                    .init(
+                        segments: error.response.segments,
+                        usage: usage
+                    )
                 )
                 continuation.finish()
                 return
@@ -327,8 +394,11 @@ public final class Agent: Sendable {
                     metadata: metadata,
                     session: session,
                     resetInvocationState: resetInvocationState,
+                    beforeCallUsage: session.usage,
                     streamingInto: continuation
                 )
+                continuation.finish()
+                return
             }
 
             continuation.finish(throwing: error)
@@ -343,9 +413,11 @@ public final class Agent: Sendable {
         // NOTE: Inserting a tool output is not necessary
         // aka: ToolCalls -> Response directly will not cause any error on the next generation using the transcript history,
         // but adding it here so that each tool call can be paired with an output
-        session.transcript.history.append(
-            .toolOutput(output)
-        )
+        if !session.transcript.history.contains(where: { $0.id == output.id }) {
+            session.transcript.history.append(
+                .toolOutput(output)
+            )
+        }
         let response = Transcript.Response(segments: output.segments)
         session.transcript.history.append(
             .response(response)
@@ -392,23 +464,6 @@ extension LanguageModelSession {
     }
 }
 
-extension Array where Element == Transcript.Segment {
-    var rawContent: String {
-        return self.compactMap { segment -> String? in
-            switch segment {
-            case .text(let text):
-                text.content.isEmpty ? nil : text.content
-            case .structure(let structure):
-                structure.content.jsonString
-            case .attachment(_):
-                nil
-            @unknown default:
-                nil
-            }
-        }.joined(separator: "\n")
-    }
-}
-
 extension Error {
     var isRetryError: Bool {
         return self.isError(RetryModelGenerationError.self)
@@ -420,6 +475,10 @@ extension Error {
 
     var delegatedError: DelegatedToolError? {
         return self.error(DelegatedToolError.self)
+    }
+
+    var responseFinishError: ResponseFinishedError? {
+        return self.error(ResponseFinishedError.self)
     }
 
     func isError<T: Error>(_ type: T.Type) -> Bool {

@@ -29,19 +29,17 @@ func printStream(_ stream: AsyncThrowingStream<AgentStreamEvent, Error>)
 {
     var printed = ""
     for try await snapshot in stream {
-        switch snapshot {
-        case .contentUpdate(rawContent: let raw, _):
-            let content: String = (try? raw.value()) ?? "Conversion failed"
-            print(content.dropFirst(printed.count), terminator: "")
-            printed = content
-        case .delegatedToolOutput(let output):
-            print("delegatedToolOutput: ", output.description)
-        }
+        let content: String =
+            (try? snapshot.rawContent.value()) ?? "Conversion failed"
+        print(content.dropFirst(printed.count), terminator: "")
+        printed = content
     }
     print()
 }
 
 func printHistory(_ history: Transcript.HistoryView) {
+    print("---Session History---")
+
     for entry in history {
         switch entry {
 
@@ -70,4 +68,6 @@ func printHistory(_ history: Transcript.HistoryView) {
             print("unknown entry")
         }
     }
+
+    print("------")
 }

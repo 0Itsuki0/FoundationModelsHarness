@@ -18,15 +18,15 @@ import FoundationModelsHarness
 private func testStream(_ agent: Agent) async throws {
     try await printStream(agent.streamResponse(to: "greet itsuki"))
     try await printStream(agent.streamResponse(to: "who did you greet?"))
+    printHistory(agent.transcript.history)
 }
 
 private func testRespond(_ agent: Agent) async throws {
     let response = try await agent.respond(to: "greet itsuki")
     print("response: ", response)
-    print("current transcript history")
-    printHistory(agent.transcript.history)
     let followUp = try await agent.respond(to: "who did you greet?")
     print("follow up: ", followUp)
+    printHistory(agent.transcript.history)
 }
 
 func toolDelegation(stream: Bool = false) async throws {

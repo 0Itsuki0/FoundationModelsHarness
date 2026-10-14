@@ -7,6 +7,7 @@
 
 import Foundation
 
+/// Hook Event Handler configuration
 public struct HookCallbackOptions: Sendable, Hashable, Equatable {
     /// Callback ordering:
     /// By default, After event callbacks run in reverse registration order for cleanup symmetry.
