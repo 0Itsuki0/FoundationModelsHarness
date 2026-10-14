@@ -16,31 +16,25 @@ do {
     )
 
     agent.addHook(
-        BeforeToolCallEventHandler(callback: { event in
-            event.agent.invocationState["before called"] = true
-
-            // cancel the tool call
-            // event.cancel = .init(stringLiteral: "failed to greet. Do it yourself.")
-
-            // modify tool calls
-            event.toolCall.toolName = GreetingTool().name
-            let argument = GreetingTool.Arguments(name: "⭐⭐itsuki⭐⭐")
-            event.toolCall.arguments = argument.generatedContent
+        BeforeModelCallEventHandler(callback: { event in
+            event.prompt.segments.append(
+                .text(.init(content: "Always start your response with ⭐."))
+            )
         })
     )
 
-    // let response = try await agent.respond(to: "hello.")
-    // print("response: ", response)
+    //    let response = try await agent.respond(to: "hello.")
+    //    print("response: ", response)
+
+        try await beforeToolCallHook(stream: true, example: .toolCallMutation)
 
     // testing stream
-    try await printStream(agent.streamResponse(to: "greet itsuki"))
-    try await printStream(
-        agent.streamResponse(to: "what's your last tool use?")
-    )
-
-    print("---Session History---")
-    printHistory(agent.transcript.history)
-    print("------")
+//    try await printStream(agent.streamResponse(to: "hello. greet itsuki."))
+//    try await printStream(
+//        agent.streamResponse(to: "how's going?")
+//    )
+//
+//        printHistory(agent.transcript.history)
 
 } catch {
     print("error: ", error)

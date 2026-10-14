@@ -23,7 +23,7 @@ public struct BeforeModelCallEventHandler: HookEventHandler {
     public struct EventPayload: Sendable {
         /// The prompt that triggers the event.
         ///
-        /// Read/write.
+        /// Read/write. Last-wins.
         ///
         /// - Mutate `prompt` in place to modify what will be sent to the model for generating a response.
         public var prompt: Transcript.Prompt
@@ -38,9 +38,9 @@ public struct BeforeModelCallEventHandler: HookEventHandler {
         /// Set to a non-nil value to cancel this model call. (`JSONValue.null` will cancel the call.)
         /// The value set here will be used as the model  response.
         ///
-        /// Read/write.
+        /// Read/write. Last-wins.
         ///
-        /// `AfterModelCall` hook will be triggered with the `Transcript.Response` created above.
+        /// `AfterModelCall` hook will be triggered with the model response created from the `cancel` value.
         ///
         /// **NOTE**:
         /// Setting `cancel` do NOT prevent the remaining `BeforeModelCallEventHandler` from being called.
@@ -48,6 +48,8 @@ public struct BeforeModelCallEventHandler: HookEventHandler {
         /// something like if (event.cancel) return.
         /// - Later callbacks can undo the cancel
         /// - Later callback can change the cancel value (message used as the model response)
+        ///
+        /// `stopReason` on the returned `AgentResult` is `'endTurn'`.
         public var cancel: JSONValue? = nil
     }
 

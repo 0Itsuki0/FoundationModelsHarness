@@ -13,13 +13,42 @@ public struct AfterToolCallEventHandler: HookEventHandler {
     public let id = HookID()
 
     public struct EventPayload: Sendable {
-        let toolCall: Transcript.ToolCall
-        let toolOutput: Transcript.ToolOutput
-        /// History in agent will not contain the tool output
-        let agent: LocalAgent
+        /// The tool call that triggers the output.
+        ///
+        /// Read only.
+        public let toolCall: Transcript.ToolCall
 
-        // TODO: add hook endTurn. (end the turn with a message that will be used directly as model's output)
-        // strands-ts/src/agent/agent.ts: line 1784
+        /// The output of the tool call.
+        ///
+        /// Read/write. Last-wins.
+        ///
+        /// Can be mutated / replaced by hook callbacks to transform the result before it enters the conversation history.
+        public var toolOutput: Transcript.ToolOutput
+
+        /// Following parameters accessible through`agent`:
+        ///
+        /// - `agentState`: Agent state persists across requests. Read/write.
+        /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
+        /// - `history`: The transcript entries excluding the leading instructions entry, if present, up to **(not including)** the last tool output
+        public let agent: LocalAgent
+
+        /// Boolean flag that can be set by hook callbacks to request a retry of the tool call.
+        /// When set to true, the agent will re-execute the tool.
+        ///
+        /// Read/write. Last-wins.
+        public var retry: Bool = false
+
+
+        /// Set to a non-nil value to end the turn (agent loop) after this tool completes. (`JSONValue.null` will end the turn.)
+        /// The value set here will become the final assistant message content directly.
+        ///
+        /// Read/write. Last-wins.
+        ///
+        /// `AfterModelCall` hook will be triggered with the model response created from the `endTurn` value.
+        ///
+        /// `stopReason` on the returned `AgentResult` is `'endTurn'`.
+        public var endTurn: JSONValue?
+
     }
 
     /// the error thrown will be propagated up directly to the `respond` or `streamResponse`.

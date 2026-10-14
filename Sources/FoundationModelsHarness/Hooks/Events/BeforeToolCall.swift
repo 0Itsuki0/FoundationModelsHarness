@@ -23,15 +23,11 @@ public struct BeforeToolCallEventHandler: HookEventHandler {
     public struct EventPayload: Sendable {
         /// The tool call that triggers the event.
         ///
-        /// Read/write.
+        /// Read/write. Last-wins (If a later `BeforeToolCallEventHandler` modifies the `toolCall` , that one will be the one executed.).
         ///
         /// - Mutate `toolCall` in place, or replace it wholesale, to rewrite the tool
         ///   input or name before execution.
         ///   The `name` has to be one of the registered tools. If it  is changed, a different tool will be called.'
-        ///
-        /// **NOTE**:
-        /// Modification is last-win.
-        /// If a later `BeforeToolCallEventHandler` modifies the `toolCall` , that one will be the one executed.
         public var toolCall: Transcript.ToolCall
 
         /// All tools being called in the current turn including the one triggers the event
@@ -48,13 +44,13 @@ public struct BeforeToolCallEventHandler: HookEventHandler {
 
         /// Set to a non-nil value to cancel this tool call with the value being the result error message. (`JSONValue.null` will cancel the tool call.)
         ///
-        /// Read/write.
+        /// Read/write. Last-wins.
         ///
         /// A `Transcript.ToolOutput` will be created from the value here and send back to the model for a final response.
         /// The `ToolOutput` segments will be one single `Transcript.StructuredSegment` created with the JSON representation of `ToolOutputWrapper`
         /// where the `content` is the value set on the `cancel`,  and the `status` being `Status.error`.
         ///
-        /// `AfterToolCall` hook will be triggered with the `Transcript.ToolOutput` created above.
+        /// `AfterToolCall` hook will be triggered with the `Transcript.ToolOutput` created.
         ///
         /// **NOTE**:
         /// Setting `cancel` do NOT prevent the remaining `BeforeToolCallEventHandler` from being called.
