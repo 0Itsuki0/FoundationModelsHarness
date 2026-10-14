@@ -104,6 +104,7 @@ public final class Agent: Sendable {
     }
 
     private func setupBuiltInHooks() {
+        // TODO: - maybe changed this to use `endTurn` instead so that `AfterInvocation` hooks can be triggered
         self.addHook(
             AfterToolCallEventHandler(
                 callback: { [weak self] event in

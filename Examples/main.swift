@@ -16,7 +16,7 @@ do {
     )
 
     agent.addHook(
-        BeforeModelCallEventHandler(callback: { event in
+        BeforeInvocationEventHandler(callback: { event in
             event.prompt.segments.append(
                 .text(.init(content: "Always start your response with ⭐."))
             )

@@ -38,13 +38,14 @@ public struct AfterToolCallEventHandler: HookEventHandler {
         /// Read/write. Last-wins.
         public var retry: Bool = false
 
+        // TODO: - consider adding attemptCount similar to Strands' AfterModelCallEvent.attemptCount
 
         /// Set to a non-nil value to end the turn (agent loop) after this tool completes. (`JSONValue.null` will end the turn.)
         /// The value set here will become the final assistant message content directly.
         ///
         /// Read/write. Last-wins.
         ///
-        /// `AfterModelCall` hook will be triggered with the model response created from the `endTurn` value.
+        /// `AfterInvocation` hook will be triggered with the model response created from the `endTurn` value.
         ///
         /// `stopReason` on the returned `AgentResult` is `'endTurn'`.
         public var endTurn: JSONValue?

@@ -1,5 +1,5 @@
 //
-//  BeforeModelCall.swift
+//  BeforeInvocation.swift
 //  FoundationModelsHarness
 //
 //  Created by Itsuki on 2026/10/10.
@@ -7,7 +7,7 @@
 
 import FoundationModels
 
-/// Event triggered just before a prompt is sent to the model.
+/// Event triggered just before a *user* prompt is sent to the model.
 ///
 /// **NOTE**
 /// The event will NOT be triggered when sending tool results back to the model for a response.
@@ -15,8 +15,8 @@ import FoundationModels
 /// Hook callbacks can:
 /// - Set `cancel` to prevent the model from executing.
 /// - Mutate `prompt` in place to modify what is sent to the model. You can use it, for example, for Context Injection.
-public struct BeforeModelCallEventHandler: HookEventHandler {
-    static public let eventType: HookEventType = .beforeModelCall
+public struct BeforeInvocationEventHandler: HookEventHandler {
+    static public let eventType: HookEventType = .beforeInvocation
 
     public let id = HookID()
 
@@ -40,10 +40,10 @@ public struct BeforeModelCallEventHandler: HookEventHandler {
         ///
         /// Read/write. Last-wins.
         ///
-        /// `AfterModelCall` hook will be triggered with the model response created from the `cancel` value.
+        /// `AfterInvocation` hook will be triggered with the model response created from the `cancel` value.
         ///
         /// **NOTE**:
-        /// Setting `cancel` do NOT prevent the remaining `BeforeModelCallEventHandler` from being called.
+        /// Setting `cancel` do NOT prevent the remaining `BeforeInvocationEventHandler` from being called.
         /// - Later callbacks see the cancel. They get the same event object, so they can read event.cancel and skip their own work with
         /// something like if (event.cancel) return.
         /// - Later callbacks can undo the cancel

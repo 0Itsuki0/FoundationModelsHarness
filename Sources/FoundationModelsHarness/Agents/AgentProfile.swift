@@ -58,8 +58,8 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
             var historyBeforePrompt: Transcript.HistoryView = history
             historyBeforePrompt.removeAll { $0.id == prompt.id }
 
-            let handlers = hookRegistry.beforeModelCallHandlers
-            var event = BeforeModelCallEventHandler.EventPayload(
+            let handlers = hookRegistry.beforeInvocationHandlers
+            var event = BeforeInvocationEventHandler.EventPayload(
                 prompt: prompt,
                 agent: createLocalAgent(with: historyBeforePrompt)
             )
@@ -112,7 +112,7 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
 
     }
 
-    // TODO: - 
+    // TODO: -
     private func handleOnToolOutput(
         toolCall: Transcript.ToolCall,
         toolOutput: Transcript.ToolOutput

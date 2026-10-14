@@ -1,5 +1,5 @@
 //
-//  BeforeModelCall.swift
+//  BeforeInvocation.swift
 //  FoundationModelsHarness
 //
 //  Created by Itsuki on 2026/10/14.
@@ -13,7 +13,7 @@ import FoundationModelsHarness
 /// - `stateAccessing`: Read/write states that ca also be read/write from the tools / other hook handlers
 /// - `cancellation`: Cancel the model invocation with a message
 /// - `promptMutation`: change the prompt
-enum BeforeModelCallExample {
+enum BeforeInvocationExample {
     case stateAccessing
     case cancellation
     case promptMutation
@@ -31,7 +31,7 @@ private func testRespond(_ agent: Agent) async throws {
 
 private func setupCancellation(_ agent: Agent) {
     agent.addHook(
-        BeforeModelCallEventHandler(
+        BeforeInvocationEventHandler(
             callback: { event in
                 // cancel the tool call
                 event.cancel = .init(
@@ -47,7 +47,7 @@ private func setupCancellation(_ agent: Agent) {
 
 private func setupPromptMutation(_ agent: Agent) {
     agent.addHook(
-        BeforeModelCallEventHandler(callback: { event in
+        BeforeInvocationEventHandler(callback: { event in
             // modify the prompt
             event.prompt.segments.append(
                 .text(.init(content: "Always start your response with ⭐."))
@@ -58,7 +58,7 @@ private func setupPromptMutation(_ agent: Agent) {
 
 private func setUpStateAccessing(_ agent: Agent) {
     agent.addHook(
-        BeforeModelCallEventHandler(callback: { event in
+        BeforeInvocationEventHandler(callback: { event in
             print(
                 """
                 BeforeToolCallEventHandler triggered: 
@@ -78,9 +78,9 @@ private func setUpStateAccessing(_ agent: Agent) {
     )
 }
 
-func beforeModelCallHook(
+func beforeInvocationHook(
     stream: Bool = false,
-    example: BeforeModelCallExample
+    example: BeforeInvocationExample
 )
     async throws
 {

@@ -16,11 +16,11 @@ public enum HookEventType: Sendable, Hashable, Equatable {
     case beforeToolCall
 
     /// Triggered just before the model is invoked, aka: before messages are sent to the model for inference
-    case beforeModelCall
+    case beforeInvocation
 
     var useReverseOrder: Bool {
         switch self {
-        case .beforeModelCall: false
+        case .beforeInvocation: false
         case .beforeToolCall: false
         case .afterToolCall: true
         }

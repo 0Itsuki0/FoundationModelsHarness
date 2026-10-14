@@ -33,7 +33,7 @@ struct HookOrdered<T: HookEventHandler> {
 struct HookRegistry {
     // MARK: - Before Event
     @HookOrdered
-    private(set) var beforeModelCallHandlers: [BeforeModelCallEventHandler]
+    private(set) var beforeInvocationHandlers: [BeforeInvocationEventHandler]
 
     @HookOrdered
     private(set) var beforeToolCallHandlers: [BeforeToolCallEventHandler]
@@ -43,19 +43,19 @@ struct HookRegistry {
     private(set) var afterToolCallHandlers: [AfterToolCallEventHandler]
 
     init(
-        beforeModelCallHandlers: [BeforeModelCallEventHandler] = [],
+        beforeInvocationHandlers: [BeforeInvocationEventHandler] = [],
         beforeToolCallHandlers: [BeforeToolCallEventHandler] = [],
         afterToolCallHandlers: [AfterToolCallEventHandler] = [],
     ) {
-        self.beforeModelCallHandlers = beforeModelCallHandlers
+        self.beforeInvocationHandlers = beforeInvocationHandlers
         self.beforeToolCallHandlers = beforeToolCallHandlers
         self.afterToolCallHandlers = afterToolCallHandlers
     }
 
     @discardableResult
     mutating func addHook(_ hook: any HookEventHandler) -> HookID {
-        if let hook = hook as? BeforeModelCallEventHandler {
-            self.beforeModelCallHandlers.append(hook)
+        if let hook = hook as? BeforeInvocationEventHandler {
+            self.beforeInvocationHandlers.append(hook)
         }
 
         if let hook = hook as? BeforeToolCallEventHandler {
@@ -70,7 +70,7 @@ struct HookRegistry {
     }
 
     mutating func removeHook(_ id: HookID) {
-        self.beforeModelCallHandlers.remove(id)
+        self.beforeInvocationHandlers.remove(id)
         self.beforeToolCallHandlers.remove(id)
         self.afterToolCallHandlers.remove(id)
     }
@@ -78,8 +78,8 @@ struct HookRegistry {
     mutating func removeHooks(for types: Set<HookEventType>) {
         for type in types {
             switch type {
-            case .beforeModelCall:
-                self.beforeModelCallHandlers.removeAll()
+            case .beforeInvocation:
+                self.beforeInvocationHandlers.removeAll()
             case .beforeToolCall:
                 self.beforeToolCallHandlers.removeAll()
             case .afterToolCall:

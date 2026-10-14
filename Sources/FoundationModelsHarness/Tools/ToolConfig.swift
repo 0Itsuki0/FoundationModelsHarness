@@ -32,7 +32,7 @@ public struct ToolConfig: Sendable {
     ///
     /// NOTE:
     /// If a  delegated tool output a result,
-    /// the `AfterModelCall` hook will not be triggered (as there is no model called for the final response).
+    /// the `AfterInvocation` hook will not be triggered (as there is no model called for the final response).
     let delegate: Bool
 
     /// - `tool`: the tool being added to the session

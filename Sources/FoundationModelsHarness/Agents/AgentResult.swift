@@ -26,7 +26,7 @@ public struct AgentResult: Sendable {
 }
 
 /// - `delegatedToolOutput` - Delegated tool output.
-///    In the case of a `delegatedToolOutput`, `AfterModelCall` hook will not be triggered (as there is no model called for the final response).
+///    In the case of a `delegatedToolOutput`, `AfterInvocation` hook will not be triggered (as there is no model called for the final response).
 /// - `endTurn` - Natural end of the model's turn
 public enum StopReason: Sendable {
     //    case delegatedToolOutput
