@@ -38,69 +38,7 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         /// `transcriptErrorHandlingPolicy` needs to be set to `preserveTranscript`.
         /// Otherwise, when we throw a FakeError, the previous request from the user will also be lost.
         .transcriptErrorHandlingPolicy(.preserveTranscript)
-        .onPrompt { prompt in
-
-            /// remove the dummy empty prompt added when calling `responseStream`/`respond` used to force the retry from the updated history
-            /// This will work as long as the transcript ends with prompt / tool output entry,
-            /// which is indeed the case here.
-            history.removeDummyPrompt()
-
-            /// Internal Retry. Return early. No Hook triggered.
-            if isInternalRetry {
-                return
-            }
-
-            /// history will contain the prompt as its last entry
-            ///
-            /// NOTE: **Not** modifying history directly at the start
-            /// so that in the case where handler throws
-            /// we still have a clean history (managed by the FoundationModels SDK. Untouched)
-            var historyBeforePrompt: Transcript.HistoryView = history
-            historyBeforePrompt.removeAll { $0.id == prompt.id }
-
-            let handlers = hookRegistry.beforeInvocationHandlers
-            var event = BeforeInvocationEventHandler.EventPayload(
-                prompt: prompt,
-                agent: createLocalAgent(with: historyBeforePrompt)
-            )
-
-            for handler in handlers {
-                try await handler.callback(&event)
-            }
-
-            /// Model call cancelled with a cancelled content. last-wins.
-            if let cancel = event.cancel {
-                let response = Transcript.Response(
-                    segments: SegmentBuilder.segments(
-                        from: cancel,
-                        schemaName: "GeneratedContent"
-                    )
-                )
-
-                /// Add the response entry to the history.
-                ///
-                /// Doing this before calling the `handleOnResponse` because
-                /// the when `onResponse` is triggered by the system,
-                /// the `history` will contains the last `Transcript.Response`
-                self.history.append(.response(response))
-
-                /// programmatically triggers the `onResponse` Event
-                try await self.handleOnResponse(response)
-
-                throw ResponseFinishedError(response)
-            }
-
-            /// No changes to the tool Call. Return early.
-            guard prompt != event.prompt else {
-                return
-            }
-
-            /// Prompt modified. Last-wins
-            ///
-            /// NOTE: modifying the history here directly will indeed effect what the model sees (respond to),
-            /// which is different from modifying the tool call in onToolCall where the model will NOT see the updated tool call parameters.
-            self.history = historyBeforePrompt + [.prompt(event.prompt)]
-        }
+        .onPrompt(perform: handleOnPrompt)
         .onToolOutput(perform: handleOnToolOutput)
         .onToolCall(perform: handleOnToolCall)
         .onResponse(perform: handleOnResponse)
@@ -112,17 +50,89 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
 
     }
 
+    private func handleOnPrompt(_ prompt: Transcript.Prompt) async throws {
+        /// remove the dummy empty prompt added when calling `responseStream`/`respond` used to force the retry from the updated history
+        /// This will work as long as the transcript ends with prompt / tool output entry,
+        /// which is indeed the case here.
+        history.removeDummyPrompt()
+
+        /// Internal Retry. Return early. No Hook triggered.
+        if isInternalRetry {
+            return
+        }
+
+        /// history will contain the prompt as its last entry
+        ///
+        /// NOTE: **Not** modifying history directly at the start
+        /// so that in the case where handler throws
+        /// we still have a clean history (managed by the FoundationModels SDK. Untouched)
+        var historyBeforePrompt: Transcript.HistoryView = history
+        historyBeforePrompt.removeAll {
+            $0.asPrompt != nil && $0.id == prompt.id
+        }
+
+        let handlers = hookRegistry.beforeInvocationHandlers
+        var event = BeforeInvocationEventHandler.EventPayload(
+            prompt: prompt,
+            agent: createLocalAgent(with: historyBeforePrompt)
+        )
+
+        for handler in handlers {
+            try await handler.callback(&event)
+        }
+
+        /// Model call cancelled with a cancelled content. last-wins.
+        if let cancel = event.cancel {
+            let response = Transcript.Response(
+                segments: SegmentBuilder.segments(
+                    from: cancel,
+                    schemaName: "GeneratedContent"
+                )
+            )
+
+            /// Add the response entry to the history.
+            ///
+            /// Doing this before calling the `handleOnResponse` because
+            /// the when `onResponse` is triggered by the system,
+            /// the `history` will contains the last `Transcript.Response`
+            self.history.append(.response(response))
+
+            /// programmatically triggers the `onResponse` Event
+            try await self.handleOnResponse(response)
+
+            throw ResponseFinishedError(response)
+        }
+
+        /// No changes to the tool Call. Return early.
+        guard prompt != event.prompt else {
+            return
+        }
+
+        /// Prompt modified. Last-wins
+        ///
+        /// NOTE: modifying the history here directly will indeed effect what the model sees (respond to),
+        /// which is different from modifying the tool call in onToolCall where the model will NOT see the updated tool call parameters.
+        self.history = historyBeforePrompt + [.prompt(event.prompt)]
+
+    }
+
     // TODO: -
     private func handleOnToolOutput(
         toolCall: Transcript.ToolCall,
         toolOutput: Transcript.ToolOutput
     ) async throws {
-        /// `history` will contains the last Transcript.ToolCalls entry but **NOT** the `Transcript.ToolOutput`
+        /// `history` will contains the last Transcript.ToolCalls entry but should **NOT** contain the `Transcript.ToolOutput`
+        /// However, still do a double check here.
+        var historyBeforeOutput = history
+        historyBeforeOutput.removeAll {
+            $0.asToolOutput != nil && $0.id == toolOutput.id
+        }
+
         let handlers = hookRegistry.afterToolCallHandlers
         var event = AfterToolCallEventHandler.EventPayload(
             toolCall: toolCall,
             toolOutput: toolOutput,
-            agent: createLocalAgent(with: history)
+            agent: createLocalAgent(with: historyBeforeOutput)
         )
         for handler in handlers {
             try await handler.callback(&event)

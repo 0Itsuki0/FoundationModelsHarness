@@ -91,12 +91,15 @@ public final class Agent: Sendable {
         self.delegatedToolName.contains(toolName)
     }
 
+    private let profile: AgentProfile
+
     public init(tools: [ToolConfig], instruction: Instructions) {
         let instruction = ToolConfig.injectDelegationPrompt(
             for: tools,
             on: instruction
         )
         let profile = AgentProfile(tools: tools, instruction: instruction)
+        self.profile = profile
         let session = LanguageModelSession(profile: profile)
         self.session = session
         self.tools = tools
@@ -428,6 +431,13 @@ public final class Agent: Sendable {
 }
 
 extension Transcript.Entry {
+    var asToolOutput: Transcript.ToolOutput? {
+        if case .toolOutput(let output) = self {
+            return output
+        }
+        return nil
+    }
+
     var asResponse: Transcript.Response? {
         if case .response(let response) = self {
             return response
