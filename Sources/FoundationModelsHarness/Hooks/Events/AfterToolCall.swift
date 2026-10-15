@@ -30,7 +30,7 @@ public struct AfterToolCallEventHandler: HookEventHandler {
         /// - `agentState`: Agent state persists across requests. Read/write.
         /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
         /// - `history`: The transcript entries excluding the leading instructions entry, if present, up to **(not including)** the last tool output
-        public let agent: LocalAgent
+        public let agent: AgentSnapshot
 
         /// Boolean flag that can be set by hook callbacks to request a retry of the tool call.
         /// When set to true, the agent will re-execute the tool.

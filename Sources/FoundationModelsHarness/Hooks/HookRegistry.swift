@@ -41,6 +41,14 @@ struct HookRegistry {
     // MARK: - After Event
     @HookOrdered
     private(set) var afterToolCallHandlers: [AfterToolCallEventHandler]
+    
+//    @HookOrdered
+//    private(set) var afterModelCallHandlers: [AfterToolCallEventHandler]
+//
+//    
+//    @HookOrdered
+//    private(set) var afterInvocationHandlers: [AfterToolCallEventHandler]
+
 
     init(
         beforeInvocationHandlers: [BeforeInvocationEventHandler] = [],
@@ -84,6 +92,9 @@ struct HookRegistry {
                 self.beforeToolCallHandlers.removeAll()
             case .afterToolCall:
                 self.afterToolCallHandlers.removeAll()
+                
+            default:
+                break
             }
         }
     }

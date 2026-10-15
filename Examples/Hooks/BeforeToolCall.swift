@@ -20,13 +20,13 @@ enum BeforeToolCallExample {
 }
 
 private func testStream(_ agent: Agent) async throws {
-    try await printStream(agent.streamResponse(to: "greet itsuki"))
-    printHistory(agent.transcript.history)
+    await printStream(agent.streamResponse(to: "greet itsuki"))
+    printHistory(agent.history)
 }
 
 private func testRespond(_ agent: Agent) async throws {
-    let _ = try await agent.respond(to: "greet itsuki")
-    printHistory(agent.transcript.history)
+    let _ = await agent.respond(to: "greet itsuki")
+    printHistory(agent.history)
 }
 
 private func setupCancellation(_ agent: Agent) {

@@ -7,21 +7,18 @@
 
 import FoundationModels
 
-/// Event triggered just before a *user* prompt is sent to the model.
-///
-/// **NOTE**
-/// The event will NOT be triggered when sending tool results back to the model for a response.
+/// Event triggered at the beginning of a new agent request.
+/// Fired before any model inference or tool execution occurs.
 ///
 /// Hook callbacks can:
-/// - Set `cancel` to prevent the model from executing.
-/// - Mutate `prompt` in place to modify what is sent to the model. You can use it, for example, for Context Injection.
+/// - Set `cancel` to cancel this invocation.
 public struct BeforeInvocationEventHandler: HookEventHandler {
     static public let eventType: HookEventType = .beforeInvocation
 
     public let id = HookID()
 
     public struct EventPayload: Sendable {
-        /// The prompt that triggers the event.
+        /// The prompt to be sent to the model.
         ///
         /// Read/write. Last-wins.
         ///
@@ -33,7 +30,7 @@ public struct BeforeInvocationEventHandler: HookEventHandler {
         /// - `agentState`: Agent state persists across requests. Read/write.
         /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
         /// - `history`: The transcript entries excluding the leading instructions entry, if present, up to **(not including)** the current prompt
-        public let agent: LocalAgent
+        public let agent: AgentSnapshot
 
         /// Set to a non-nil value to cancel this model call. (`JSONValue.null` will cancel the call.)
         /// The value set here will be used as the model  response.
@@ -63,5 +60,13 @@ public struct BeforeInvocationEventHandler: HookEventHandler {
     ) {
         self.callback = callback
         self.options = options
+    }
+}
+
+extension BeforeInvocationEventHandler {
+    enum CallbackHandlingResult: Sendable {
+        case cancelled(Transcript.Response)
+        case `continue`(Transcript.Prompt)
+        case callbackThrows(Error)
     }
 }

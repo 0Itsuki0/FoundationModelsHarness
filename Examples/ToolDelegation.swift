@@ -16,9 +16,9 @@ import FoundationModelsHarness
 /// and
 /// on best effort: The delegation tool is the only tool called in the turn
 private func testStream(_ agent: Agent) async throws {
-    try await printStream(agent.streamResponse(to: "greet itsuki"))
-    try await printStream(agent.streamResponse(to: "who did you greet?"))
-    printHistory(agent.transcript.history)
+    await printStream(agent.streamResponse(to: "greet itsuki"))
+    await printStream(agent.streamResponse(to: "who did you greet?"))
+    printHistory(agent.history)
 }
 
 private func testRespond(_ agent: Agent) async throws {
@@ -26,7 +26,7 @@ private func testRespond(_ agent: Agent) async throws {
     print("response: ", response)
     let followUp = await agent.respond(to: "who did you greet?")
     print("follow up: ", followUp)
-    printHistory(agent.transcript.history)
+    printHistory(agent.history)
 }
 
 func toolDelegation(stream: Bool = false) async throws {

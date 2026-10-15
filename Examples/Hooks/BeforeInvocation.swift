@@ -5,6 +5,7 @@
 //  Created by Itsuki on 2026/10/14.
 //
 
+import Foundation
 import FoundationModelsHarness
 
 /// Before model call hook:  triggered just before a prompt is sent to the model..
@@ -20,13 +21,16 @@ enum BeforeInvocationExample {
 }
 
 private func testStream(_ agent: Agent) async throws {
-    try await printStream(agent.streamResponse(to: "Hello"))
-    printHistory(agent.transcript.history)
+    await printStream(agent.streamResponse(to: "Hello"))
+    printHistory(agent.history)
 }
 
 private func testRespond(_ agent: Agent) async throws {
-    let _ = try await agent.respond(to: "Hello")
-    printHistory(agent.transcript.history)
+    let _ = await agent.respond(
+        to: "Hello",
+        invocationState: ["start_at": .string(Date().ISO8601Format())]
+    )
+    printHistory(agent.history)
 }
 
 private func setupCancellation(_ agent: Agent) {
@@ -34,9 +38,7 @@ private func setupCancellation(_ agent: Agent) {
         BeforeInvocationEventHandler(
             callback: { event in
                 // cancel the tool call
-                event.cancel = .init(
-                    stringLiteral: "Service temporarily not available"
-                )
+                event.cancel = "Service temporarily not available"
             },
             // set a custom order.
             // cancellation mutation is last win so we might want to run it as late as possible

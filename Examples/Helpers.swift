@@ -27,12 +27,8 @@ struct GreetingTool: Tool {
 func printStream(_ stream: AsyncStream<AgentStreamEvent>)
     async
 {
-    var printed = ""
     for await snapshot in stream {
-        let content: String =
-            (try? snapshot.rawContent?.value()) ?? "Conversion failed"
-        print(content.dropFirst(printed.count), terminator: "")
-        printed = content
+        print("snapshot: ", snapshot.event)
     }
     print()
 }

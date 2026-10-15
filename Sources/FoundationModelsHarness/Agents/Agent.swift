@@ -38,13 +38,20 @@ extension Agent {
     }
 }
 
+extension Transcript.Prompt {
+    static let dummyPrompt = Transcript.Prompt(
+        metadata: [InternalMetadataKey.dummyPrompt: true],
+        segments: [],
+    )
+}
+
 @dynamicMemberLookup
 @Observable
 public final class Agent: Sendable {
 
     /// Agent state accessible to tools and application logic.
     /// Lives outside the conversation context and persists across requests
-    var agentState: AgentState {
+    public var agentState: AgentState {
         get {
             session.properties.agentState
         }
@@ -53,7 +60,7 @@ public final class Agent: Sendable {
         }
     }
 
-    var history: Transcript.HistoryView {
+    public private(set) var history: Transcript.HistoryView {
         get {
             session.transcript.history
         }
@@ -154,16 +161,53 @@ public final class Agent: Sendable {
         self.invocationState = .init()
     }
 
-    // TODO: - add in wrappers for other respond / streamResponse methods
-
+    /// Produces a generated content type as a response to a prompt and schema.
+    ///
+    /// - Parameters:
+    ///   - metadata: Metadata provided as part of this prompt.
+    ///   - options: Options that control how tokens are sampled from the distribution the model produces.
+    ///   - responseFormat: A response format that describes the output structure.
+    ///   - contextOptions: Settings that configure how the model is prompted.
+    ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
     @discardableResult
     public func respond(
         to prompt: String,
+        schema: GenerationSchema? = nil,
         options: GenerationOptions = GenerationOptions(),
-        metadata: [String: any ConvertibleToGeneratedContent] = [:]
+        metadata: [String: any ConvertibleToGeneratedContent] = [:],
+        contextOptions: ContextOptions = ContextOptions(),
+        invocationState: InvocationState = [:]
+    ) async -> AgentResult {
+        return await self.respond(
+            to: Prompt(prompt),
+            schema: schema,
+            options: options,
+            metadata: metadata,
+            contextOptions: contextOptions,
+            invocationState: invocationState
+        )
+    }
+
+    /// Produces a generated content type as a response to a prompt and schema.
+    ///
+    /// - Parameters:
+    ///   - metadata: Metadata provided as part of this prompt.
+    ///   - options: Options that control how tokens are sampled from the distribution the model produces.
+    ///   - responseFormat: A response format that describes the output structure.
+    ///   - contextOptions: Settings that configure how the model is prompted.
+    ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
+    @discardableResult
+    public func respond(
+        to prompt: Prompt,
+        schema: GenerationSchema? = nil,
+        options: GenerationOptions = GenerationOptions(),
+        metadata: [String: any ConvertibleToGeneratedContent] = [:],
+        contextOptions: ContextOptions = ContextOptions(),
+        invocationState: InvocationState = [:]
     ) async -> AgentResult {
         self.isInternalRetry = false
         self.resetInvocationState()
+        self.invocationState = invocationState
 
         defer {
             do {
@@ -175,32 +219,49 @@ public final class Agent: Sendable {
             self.resetInvocationState()
         }
 
-        do {
-            try await self.beforeInvocation()
-        } catch {
+        var prompt = await Transcript.Prompt(
+            metadata: metadata,
+            segments: SegmentBuilder.segments(from: prompt),
+            options: options,
+            responseFormat: schema.map {
+                Transcript.ResponseFormat(schema: $0)
+            },
+            contextOptions: contextOptions
+        )
 
+        let callbackResult = await beforeInvocation(prompt: prompt)
+
+        switch callbackResult {
+        case .cancelled(let response):
+            return AgentResult(
+                response: response,
+                invocationState: invocationState,
+                usage: .zero
+            )
+        case .continue(let updated):
+            prompt = updated
+        case .callbackThrows(let error):
+            return AgentResult(
+                error: error,
+                invocationState: invocationState,
+                usage: .zero
+            )
         }
 
         let agentResult: AgentResult = await agentLoop(
-            to: prompt,
-            options: options,
-            metadata: metadata
+            to: prompt
         )
 
         return agentResult
     }
 
     private func agentLoop(
-        to prompt: String,
-        options: GenerationOptions = GenerationOptions(),
-        metadata: [String: any ConvertibleToGeneratedContent] = [:]
+        to prompt: Transcript.Prompt,
     ) async -> AgentResult {
         let beforeCallUsage = session.usage
 
         var modelStopData = await invokeModel(
             to: prompt,
-            options: options,
-            metadata: metadata
         )
 
         var agentResult: AgentResult?
@@ -243,11 +304,7 @@ public final class Agent: Sendable {
                         .toolOutput(toolOutput)
                     )
 
-                    modelStopData = await self.invokeModel(
-                        to: "",
-                        options: generationOptionsForToolResponse(options),
-                        metadata: buildDummyPromptMetadata(metadata)
-                    )
+                    modelStopData = await self.invokeModel(to: nil)
 
                     continue
                 } catch {
@@ -265,10 +322,9 @@ public final class Agent: Sendable {
         return agentResult!
     }
 
+    /// `prompt`: `nil` for not adding new prompt to the existing `history`
     private func invokeModel(
-        to prompt: String,
-        options: GenerationOptions = GenerationOptions(),
-        metadata: [String: any ConvertibleToGeneratedContent] = [:]
+        to prompt: Transcript.Prompt?
     ) async -> ModelStopData {
 
         let beforeCallUsage = session.usage
@@ -279,24 +335,24 @@ public final class Agent: Sendable {
 
         }
 
-        defer {
-            do {
-                try await self.afterModelCall()
-            } catch {
-
-            }
+        if let prompt {
+            /// Always add the prompt transcript programmatically and then send a dummy prompt to trigger model
+            /// to handle invocation handlers / model handlers prompt modification
+            self.history.append(.prompt(prompt))
         }
 
         let modelStopData: ModelStopData
 
         do {
             let response = try await session.respond(
-                to: prompt,
-                metadata: metadata
+                to: "",
+                metadata: dummyPromptMetadata
             )
+
             let entry: Transcript.Response =
                 self.session.lastResponse
                 ?? .init(segments: [.text(.init(content: response.content))])
+
             modelStopData = ModelStopData(
                 response: entry,
                 invocationState: invocationState,
@@ -305,6 +361,7 @@ public final class Agent: Sendable {
                     after: session.usage
                 )
             )
+
         } catch {
             let usage = calculateUsageDiff(
                 before: beforeCallUsage,
@@ -320,14 +377,16 @@ public final class Agent: Sendable {
                 )
             }
 
-            else if let error = error.retryError {
-                return await retry(
-                    for: error,
-                    options: options,
-                    metadata: metadata
-                )
+            //            else if let error = error.retryError {
+            //                return await retry(
+            //                    for: error,
+            //                    options: options,
+            //                    metadata: metadata
+            //                )
+            //
+            //            }
 
-            } else if let error = error.toolCallError {
+            else if let error = error.toolCallError {
                 modelStopData = ModelStopData(
                     toolCall: error.toolCall,
                     invocationState: invocationState,
@@ -343,27 +402,33 @@ public final class Agent: Sendable {
             }
         }
 
+        do {
+            try await self.afterModelCall()
+        } catch {
+
+        }
+
         return modelStopData
     }
 
-    private func retry(
-        for error: RetryModelGenerationError,
-        options: GenerationOptions,
-        metadata: [String: any ConvertibleToGeneratedContent],
-    ) async -> ModelStopData {
-        self.isInternalRetry = true
-        defer {
-            self.isInternalRetry = false
-        }
-
-        // A dummy empty prompt in order to force the retry from the current history
-        // the dummy will be removed from the history within `AgentProfile.onPrompt`
-        return await self.invokeModel(
-            to: "",
-            options: buildRetryGenerationOptions(options, for: error),
-            metadata: buildDummyPromptMetadata(metadata)
-        )
-    }
+    //    private func retry(
+    //        for error: RetryModelGenerationError,
+    //        options: GenerationOptions,
+    //        metadata: [String: any ConvertibleToGeneratedContent],
+    //    ) async -> ModelStopData {
+    //        self.isInternalRetry = true
+    //        defer {
+    //            self.isInternalRetry = false
+    //        }
+    //
+    //        // A dummy empty prompt in order to force the retry from the current history
+    //        // the dummy will be removed from the history within `AgentProfile.onPrompt`
+    //        return await self.invokeModel(
+    //            to: Prompt {},
+    //            options: buildRetryGenerationOptions(options, for: error),
+    //            metadata: buildDummyPromptMetadata(metadata)
+    //        )
+    //    }
 
     private func calculateUsageDiff(
         before: LanguageModelSession.Usage,
@@ -412,6 +477,11 @@ public final class Agent: Sendable {
         return options
     }
 
+    private var dummyPromptMetadata: [String: any ConvertibleToGeneratedContent]
+    {
+        [InternalMetadataKey.dummyPrompt: true]
+    }
+
     private func buildDummyPromptMetadata(
         _ metadata: [String: any ConvertibleToGeneratedContent]
     ) -> [String: any ConvertibleToGeneratedContent] {
@@ -422,8 +492,29 @@ public final class Agent: Sendable {
 
     public func streamResponse(
         to prompt: String,
+        schema: GenerationSchema? = nil,
         options: GenerationOptions = GenerationOptions(),
-        metadata: [String: any ConvertibleToGeneratedContent] = [:]
+        metadata: [String: any ConvertibleToGeneratedContent] = [:],
+        contextOptions: ContextOptions = ContextOptions(),
+        invocationState: InvocationState = [:]
+    ) -> AsyncStream<AgentStreamEvent> {
+        return self.streamResponse(
+            to: Prompt(prompt),
+            schema: schema,
+            options: options,
+            metadata: metadata,
+            contextOptions: contextOptions,
+            invocationState: invocationState
+        )
+    }
+
+    public func streamResponse(
+        to prompt: Prompt,
+        schema: GenerationSchema? = nil,
+        options: GenerationOptions = GenerationOptions(),
+        metadata: [String: any ConvertibleToGeneratedContent] = [:],
+        contextOptions: ContextOptions = ContextOptions(),
+        invocationState: InvocationState = [:]
     ) -> AsyncStream<AgentStreamEvent> {
         self.isInternalRetry = false
         self.resetInvocationState()
@@ -438,11 +529,9 @@ public final class Agent: Sendable {
                     session, resetInvocationState, metadata, beforeInvocation,
                     afterInvocation
                 ] in
-                do {
-                    try await beforeInvocation()
-                } catch {
 
-                }
+                // TODO: - handle callback result
+                //                let callbackResult = await beforeInvocation(prompt)
 
                 defer {
                     do {
@@ -466,34 +555,34 @@ public final class Agent: Sendable {
         }
     }
 
-    private func retryStream(
-        for error: RetryModelGenerationError,
-        options: GenerationOptions,
-        metadata: [String: any ConvertibleToGeneratedContent],
-        session: LanguageModelSession,
-        streamingInto continuation: AsyncStream<AgentStreamEvent>
-            .Continuation
-    ) async {
-        self.isInternalRetry = true
-        defer {
-            self.isInternalRetry = false
-        }
-
-        let metadata = buildDummyPromptMetadata(metadata)
-
-        // A dummy empty prompt in order to force the retry from the current history
-        // the dummy will be removed from the history within `AgentProfile.onPrompt`
-        await self.invokeModelStream(
-            prompt: "",
-            options: buildRetryGenerationOptions(options, for: error),
-            metadata: buildDummyPromptMetadata(metadata),
-            session: session,
-            streamingInto: continuation
-        )
-    }
+    //    private func retryStream(
+    //        for error: RetryModelGenerationError,
+    //        options: GenerationOptions,
+    //        metadata: [String: any ConvertibleToGeneratedContent],
+    //        session: LanguageModelSession,
+    //        streamingInto continuation: AsyncStream<AgentStreamEvent>
+    //            .Continuation
+    //    ) async {
+    //        self.isInternalRetry = true
+    //        defer {
+    //            self.isInternalRetry = false
+    //        }
+    //
+    //        let metadata = buildDummyPromptMetadata(metadata)
+    //
+    //        // A dummy empty prompt in order to force the retry from the current history
+    //        // the dummy will be removed from the history within `AgentProfile.onPrompt`
+    //        await self.invokeModelStream(
+    //            prompt: Prompt {},
+    //            options: buildRetryGenerationOptions(options, for: error),
+    //            metadata: buildDummyPromptMetadata(metadata),
+    //            session: session,
+    //            streamingInto: continuation
+    //        )
+    //    }
 
     private func invokeModelStream(
-        prompt: String,
+        prompt: Prompt,
         options: GenerationOptions = GenerationOptions(),
         metadata: [String: any ConvertibleToGeneratedContent],
         session: LanguageModelSession,
@@ -548,36 +637,36 @@ public final class Agent: Sendable {
                         usage: usage
                     )
                 )
-                
+
                 do {
                     try await self.afterModelCall()
                 } catch {
-                    
+
                 }
 
                 return
             }
 
-            if let error = error.retryError {
-                await retryStream(
-                    for: error,
-                    options: options,
-                    metadata: metadata,
-                    session: session,
-                    streamingInto: continuation
-                )
-                return
-            }
+            //            if let error = error.retryError {
+            //                await retryStream(
+            //                    for: error,
+            //                    options: options,
+            //                    metadata: metadata,
+            //                    session: session,
+            //                    streamingInto: continuation
+            //                )
+            //                return
+            //            }
 
             if let error = error.toolCallError {
                 continuation.yield(
                     .init(toolCall: error.toolCall, usage: usage)
                 )
-                
+
                 do {
                     try await self.afterModelCall()
                 } catch {
-                    
+
                 }
 
                 await streamToolCall(
@@ -585,7 +674,7 @@ public final class Agent: Sendable {
                     streamingInto: continuation,
                     invokeModelStream: {
                         await invokeModelStream(
-                            prompt: "",
+                            prompt: Prompt {},
                             options: generationOptionsForToolResponse(options),
                             metadata: buildDummyPromptMetadata(metadata),
                             session: session,
@@ -599,11 +688,11 @@ public final class Agent: Sendable {
             continuation.yield(
                 .init(error: error, usage: usage)
             )
-            
+
             do {
                 try await self.afterModelCall()
             } catch {
-                
+
             }
 
             return
@@ -665,10 +754,78 @@ extension LanguageModelSession.Usage {
 
 // MARK: - Hook
 extension Agent {
-
-    private func beforeInvocation() async throws {
+    private func beforeInvocation(prompt: Transcript.Prompt) async
+        -> BeforeInvocationEventHandler.CallbackHandlingResult
+    {
         print(#function)
+
+        /// history will contain the prompt as its last entry
+        ///
+        /// NOTE: **Not** modifying history directly at the start
+        /// so that in the case where handler throws
+        /// we still have a clean history (managed by the FoundationModels SDK. Untouched)
+
+        let handlers = hookRegistry.beforeInvocationHandlers
+        var event = BeforeInvocationEventHandler.EventPayload(
+            prompt: prompt,
+            agent: createLocalAgent(with: history)
+        )
+
+        for handler in handlers {
+            do {
+                try await handler.callback(&event)
+            } catch {
+                /// NOTE: not adding prompt to the history here.
+                /// In the case of `BeforeInvocationEventHandler` throws, no entries are added to the session history.
+                return .callbackThrows(error)
+            }
+        }
+
+        /// Invocation cancelled with a cancelled content. last-wins.
+        /// No `BeforeModelCall` opens, therefore there is no need to trigger `AfterModelCall` here.
+        if let cancel = event.cancel {
+            /// Add in the final prompt. Last-wins
+            self.history = history + [.prompt(event.prompt)]
+
+            let response = Transcript.Response(
+                segments: SegmentBuilder.segments(
+                    from: cancel,
+                    schemaName: "GeneratedContent"
+                )
+            )
+
+            /// Add the response entry to the history.
+            ///
+            /// Doing this before calling the `handleOnResponse` because
+            /// the when `onResponse` is triggered by the system,
+            /// the `history` will contains the last `Transcript.Response`
+            self.history.append(.response(response))
+
+            return .cancelled(response)
+        }
+
+        return .continue(event.prompt)
     }
+
+    //    private func handleInvocationCancelled(_ cancel: JSONValue) {
+    //        /// Add in the final prompt. Last-wins
+    //        self.history = history + [.prompt(event.prompt)]
+    //
+    //        let response = Transcript.Response(
+    //            segments: SegmentBuilder.segments(
+    //                from: cancel,
+    //                schemaName: "GeneratedContent"
+    //            )
+    //        )
+    //
+    //        /// Add the response entry to the history.
+    //        ///
+    //        /// Doing this before calling the `handleOnResponse` because
+    //        /// the when `onResponse` is triggered by the system,
+    //        /// the `history` will contains the last `Transcript.Response`
+    //        self.history.append(.response(response))
+    //
+    //    }
 
     private func beforeModelCall() async throws {
         print(#function)
@@ -696,71 +853,71 @@ extension Agent {
 
     }
 
-    private func handleOnPrompt(_ prompt: Transcript.Prompt) async throws {
-        /// remove the dummy empty prompt added when calling `responseStream`/`respond` used to force the retry from the updated history
-        /// This will work as long as the transcript ends with prompt / tool output entry,
-        /// which is indeed the case here.
-        history.removeDummyPrompt()
-
-        /// Internal Retry. Return early. No Hook triggered.
-        if isInternalRetry {
-            return
-        }
-
-        /// history will contain the prompt as its last entry
-        ///
-        /// NOTE: **Not** modifying history directly at the start
-        /// so that in the case where handler throws
-        /// we still have a clean history (managed by the FoundationModels SDK. Untouched)
-        var historyBeforePrompt: Transcript.HistoryView = history
-        historyBeforePrompt.removeAll {
-            $0.asPrompt != nil && $0.id == prompt.id
-        }
-
-        let handlers = hookRegistry.beforeInvocationHandlers
-        var event = BeforeInvocationEventHandler.EventPayload(
-            prompt: prompt,
-            agent: createLocalAgent(with: historyBeforePrompt)
-        )
-
-        for handler in handlers {
-            try await handler.callback(&event)
-        }
-
-        /// Model call cancelled with a cancelled content. last-wins.
-        if let cancel = event.cancel {
-            let response = Transcript.Response(
-                segments: SegmentBuilder.segments(
-                    from: cancel,
-                    schemaName: "GeneratedContent"
-                )
-            )
-
-            /// Add the response entry to the history.
-            ///
-            /// Doing this before calling the `handleOnResponse` because
-            /// the when `onResponse` is triggered by the system,
-            /// the `history` will contains the last `Transcript.Response`
-            self.history.append(.response(response))
-
-            /// programmatically triggers the `onResponse` Event
-            try await self.handleOnResponse(response)
-
-            throw ResponseFinishedError(response)
-        }
-
-        /// No changes to the tool Call. Return early.
-        guard prompt != event.prompt else {
-            return
-        }
-
-        /// Prompt modified. Last-wins
-        ///
-        /// NOTE: modifying the history here directly will indeed effect what the model sees (respond to),
-        /// which is different from modifying the tool call in onToolCall where the model will NOT see the updated tool call parameters.
-        self.history = historyBeforePrompt + [.prompt(event.prompt)]
-
-    }
+    //    private func handleOnPrompt(_ prompt: Transcript.Prompt) async throws {
+    //        /// remove the dummy empty prompt added when calling `responseStream`/`respond` used to force the retry from the updated history
+    //        /// This will work as long as the transcript ends with prompt / tool output entry,
+    //        /// which is indeed the case here.
+    //        history.removeDummyPrompt()
+    //
+    //        /// Internal Retry. Return early. No Hook triggered.
+    //        if isInternalRetry {
+    //            return
+    //        }
+    //
+    //        /// history will contain the prompt as its last entry
+    //        ///
+    //        /// NOTE: **Not** modifying history directly at the start
+    //        /// so that in the case where handler throws
+    //        /// we still have a clean history (managed by the FoundationModels SDK. Untouched)
+    //        var historyBeforePrompt: Transcript.HistoryView = history
+    //        historyBeforePrompt.removeAll {
+    //            $0.asPrompt != nil && $0.id == prompt.id
+    //        }
+    //
+    //        let handlers = hookRegistry.beforeInvocationHandlers
+    //        var event = BeforeInvocationEventHandler.EventPayload(
+    //            prompt: prompt,
+    //            agent: createLocalAgent(with: historyBeforePrompt)
+    //        )
+    //
+    //        for handler in handlers {
+    //            try await handler.callback(&event)
+    //        }
+    //
+    //        /// Model call cancelled with a cancelled content. last-wins.
+    //        if let cancel = event.cancel {
+    //            let response = Transcript.Response(
+    //                segments: SegmentBuilder.segments(
+    //                    from: cancel,
+    //                    schemaName: "GeneratedContent"
+    //                )
+    //            )
+    //
+    //            /// Add the response entry to the history.
+    //            ///
+    //            /// Doing this before calling the `handleOnResponse` because
+    //            /// the when `onResponse` is triggered by the system,
+    //            /// the `history` will contains the last `Transcript.Response`
+    //            self.history.append(.response(response))
+    //
+    //            /// programmatically triggers the `onResponse` Event
+    //            try await self.handleOnResponse(response)
+    //
+    //            throw ResponseFinishedError(response)
+    //        }
+    //
+    //        /// No changes to the tool Call. Return early.
+    //        guard prompt != event.prompt else {
+    //            return
+    //        }
+    //
+    //        /// Prompt modified. Last-wins
+    //        ///
+    //        /// NOTE: modifying the history here directly will indeed effect what the model sees (respond to),
+    //        /// which is different from modifying the tool call in onToolCall where the model will NOT see the updated tool call parameters.
+    //        self.history = historyBeforePrompt + [.prompt(event.prompt)]
+    //
+    //    }
 
     private func handleOnToolOutput(
         toolCall: Transcript.ToolCall,
@@ -1027,11 +1184,10 @@ extension Agent {
     }
 
     private func createLocalAgent(with history: Transcript.HistoryView)
-        -> LocalAgent
+        -> AgentSnapshot
     {
-        return LocalAgent(
-            agentState: .init(\.agentState),
-            invocationState: .init(\.invocationState),
+        return AgentSnapshot(
+            session: self.session,
             history: history
         )
     }

@@ -12,26 +12,43 @@ import FoundationModels
 /// Interface for agents with locally accessible state, messages, tools, and hooks.
 ///
 /// This interface is only for accessing state in hook events.
-public struct LocalAgent: Sendable {
+public final class AgentSnapshot: Sendable {
+    private let session: LanguageModelSession
+
     /// Agent state accessible to tools and application logic.
     /// Lives outside the conversation context and persists across requests
     ///
     /// Read/write
-    @SessionProperty public var agentState: InvocationState
+    public var agentState: AgentState {
+        get {
+            session.properties.agentState
+        }
+        set {
+            session.properties.agentState = newValue
+        }
+    }
 
     /// Invocation state accessible to tools and application logic.
     /// Lives for a single invocation.
     /// State is not passed to the model during inference.
     ///
     /// Read/write
-    @SessionProperty public var invocationState: InvocationState
+    public var invocationState: InvocationState {
+        get {
+            session.properties.invocationState
+        }
+        set {
+            session.properties.invocationState = newValue
+        }
+    }
 
     /// The transcript entries excluding the leading instructions entry, if present.
     ///
     /// Read only
     public let history: Transcript.HistoryView
-}
 
-extension LocalAgent {
-    public typealias SessionProperty = LanguageModelSession.SessionProperty
+    init(session: LanguageModelSession, history: Transcript.HistoryView) {
+        self.session = session
+        self.history = history
+    }
 }
