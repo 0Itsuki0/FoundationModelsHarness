@@ -11,21 +11,31 @@ import SwiftUI
 
 do {
     let agent = Agent(
-        tools: [.init(tool: GreetingTool(), delegate: true)],
+        tools: [.init(tool: GreetingTool(), delegate: false)],
         instruction: .init("You are a helpful assistant.")
     )
 
+//    agent.addHook(
+//        AfterToolCallEventHandler(callback: { event in
+////            if event.attemptCount <= 3 {
+////                event.retry = true
+////                return
+////            }
+//            event.endTurn = "end!"
+//        })
+//    )
+    
     agent.addHook(
-        AfterToolCallEventHandler(callback: { event in
-//            if event.attemptCount <= 3 {
-//                event.retry = true
-//                return
-//            }
-            event.endTurn = "end!"
+        BeforeToolCallEventHandler(callback: { event in
+            // modify tool calls
+            event.toolCall.toolName = GreetingTool().name
+            let argument = GreetingTool.Arguments(name: "⭐⭐itsuki⭐⭐")
+            event.toolCall.arguments = argument.generatedContent
         })
     )
 
-    let _ = try await agent.respond(to: "hello. greet itsuki.")
+
+    let _ = await agent.respond(to: "hello. greet itsuki.")
     //    print("response: ", response)
 
     // testing stream

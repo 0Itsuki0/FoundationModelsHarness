@@ -45,7 +45,10 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
                 toolOutput: toolOutput
             )
         }
-        .onToolCall(perform: handleOnToolCall)
+//        .onToolCall(perform: handleOnToolCall)
+        .onToolCall {
+            throw ToolCallError(toolCall: $0)
+        }
         .onResponse(perform: handleOnResponse)
     }
 
@@ -120,8 +123,6 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         self.history = historyBeforePrompt + [.prompt(event.prompt)]
 
     }
-
-    // TODO: -
 
     private func handleOnToolOutput(
         toolCall: Transcript.ToolCall,
@@ -426,7 +427,23 @@ enum RetryModelGenerationError: FakeError, Equatable, Hashable {
 
 extension Transcript.HistoryView {
     mutating func removeDummyPrompt() {
-        self = self.filter({ !$0.isDummyPrompt })
+        self = self.filter { !$0.isDummyPrompt }
+    }
+
+    //    mutating func removeEmptyEntry() {
+    //        self = self.filter {
+    //            $0.asResponse?.segments.isEmpty != true
+    //                || $0.asPrompt?.segments.isEmpty != true
+    //        }
+    //    }
+}
+
+extension Transcript.Segment {
+    var isAttachment: Bool {
+        if case .attachment(_) = self {
+            return true
+        }
+        return false
     }
 }
 
@@ -435,6 +452,16 @@ extension Transcript.ToolCalls {
         return Array(self)
     }
 }
+
+struct ToolCallError: FakeError {
+    var toolCall: Transcript.ToolCall
+}
+
+// this is probably never needed if we are always executing the tool ourselves.
+//struct ToolOutputError: FakeError {
+//    var toolCall: Transcript.ToolCall
+//    var toolOutput: Transcript.ToolOutput
+//}
 
 enum InternalMetadataKey {
     static let dummyPrompt = "FoundationModelHarness_dummyPrompt"

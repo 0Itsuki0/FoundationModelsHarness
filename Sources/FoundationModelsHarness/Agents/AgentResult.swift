@@ -7,29 +7,49 @@
 
 import FoundationModels
 
-/// - `delegatedToolOutput` - Delegated tool output
-/// - `endTurn` - Natural end of the model's turn
 public struct AgentResult: Sendable {
-    public let stopReason: StopReason
 
-    public let lastMessage: Transcript.Response
+    public let stopReason: AgentStopReason
 
     public let invocationState: InvocationState
 
-    /// This is **NOT** the usage obtained directly from a `LanguageModelSession.Response`,
-    /// but the full turn usage that can include tool use, reasoning, and etc.
     public let usage: LanguageModelSession.Usage
 
     public var rawContent: GeneratedContent? {
-        lastMessage.segments.rawGeneratedContent
+        switch stopReason {
+        case .endTurn(let response):
+            return response.segments.rawGeneratedContent
+        case .refusal(let error):
+            return nil
+        }
+    }
+
+    init(
+        response: Transcript.Response,
+        invocationState: InvocationState,
+        usage: LanguageModelSession.Usage
+    ) {
+        self.stopReason = .endTurn(response)
+        self.invocationState = invocationState
+        self.usage = usage
+    }
+
+    init(
+        error: Error,
+        invocationState: InvocationState,
+        usage: LanguageModelSession.Usage
+    ) {
+        self.stopReason = .refusal(error)
+        self.invocationState = invocationState
+        self.usage = usage
     }
 }
 
 /// - `delegatedToolOutput` - Delegated tool output.
 ///    In the case of a `delegatedToolOutput`, `AfterInvocation` hook will not be triggered (as there is no model called for the final response).
 /// - `endTurn` - Natural end of the model's turn
-public enum StopReason: Sendable {
-    //    case delegatedToolOutput
-    //    case modelOutput
-    case endTurn
+public enum AgentStopReason: Sendable {
+    case endTurn(Transcript.Response)
+    
+    case refusal(Error)    
 }
