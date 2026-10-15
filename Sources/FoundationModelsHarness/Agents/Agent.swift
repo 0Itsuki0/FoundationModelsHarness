@@ -166,6 +166,12 @@ public final class Agent: Sendable {
         self.resetInvocationState()
 
         defer {
+            do {
+                try await self.afterInvocation()
+            } catch {
+
+            }
+
             self.resetInvocationState()
         }
 
@@ -180,12 +186,6 @@ public final class Agent: Sendable {
             options: options,
             metadata: metadata
         )
-
-        do {
-            try await self.afterInvocation()
-        } catch {
-
-        }
 
         print("agent result: ", agentResult)
         return agentResult
@@ -250,6 +250,7 @@ public final class Agent: Sendable {
                         // buildRetryGenerationOptions(options, for: error),
                         metadata: buildRetryMetadata(metadata)
                     )
+
                     continue
                 } catch {
                     agentResult = AgentResult(
@@ -277,6 +278,15 @@ public final class Agent: Sendable {
         do {
             try await self.beforeModelCall()
         } catch {
+
+        }
+
+        defer {
+            do {
+                try await self.afterModelCall()
+            } catch {
+
+            }
 
         }
 
@@ -316,12 +326,6 @@ public final class Agent: Sendable {
 
             if let error = error.responseFinishError {
                 /// history already contains the response. returning it directly.
-                //                return AgentResult(
-                //                    stopReason: .endTurn,
-                //                    lastMessage: error.response,
-                //                    invocationState: invocationState,
-                //                    usage: usage
-                //                )
                 modelStopData = ModelStopData(
                     response: error.response,
                     invocationState: invocationState,
@@ -359,11 +363,6 @@ public final class Agent: Sendable {
             }
         }
 
-        do {
-            try await self.afterModelCall()
-        } catch {
-
-        }
         return modelStopData
     }
 
@@ -434,21 +433,44 @@ public final class Agent: Sendable {
         to prompt: String,
         options: GenerationOptions = GenerationOptions(),
         metadata: [String: any ConvertibleToGeneratedContent] = [:]
-    ) -> AsyncThrowingStream<AgentStreamEvent, Error> {
-        return AsyncThrowingStream<AgentStreamEvent, Error> { continuation in
+    ) -> AsyncStream<AgentStreamEvent> {
+        self.isInternalRetry = false
+        self.resetInvocationState()
+
+        return AsyncStream<AgentStreamEvent> { continuation in
             // Required to convert ConvertibleToGeneratedContent to GeneratedContent to avoid the following concurrency error:
             // Passing closure as a 'sending' parameter risks causing data races between code in the current isolation context and concurrent execution of the closure
             let metadata = metadata.mapValues(\.generatedContent)
 
-            Task { [session, resetInvocationState, metadata] in
-                await streamHelper(
+            Task {
+                [
+                    session, resetInvocationState, metadata, beforeInvocation,
+                    afterInvocation
+                ] in
+                do {
+                    try await beforeInvocation()
+                } catch {
+
+                }
+
+                defer {
+                    do {
+                        try await afterInvocation()
+                    } catch {
+
+                    }
+
+                    resetInvocationState()
+                }
+
+                await invokeModelStream(
                     prompt: prompt,
                     metadata: metadata,
                     session: session,
-                    resetInvocationState: resetInvocationState,
-                    beforeCallUsage: session.usage,
                     streamingInto: continuation,
                 )
+
+                continuation.finish()
             }
         }
     }
@@ -458,9 +480,7 @@ public final class Agent: Sendable {
         options: GenerationOptions,
         metadata: [String: any ConvertibleToGeneratedContent],
         session: LanguageModelSession,
-        resetInvocationState: () -> Void,
-        beforeCallUsage: LanguageModelSession.Usage,
-        streamingInto continuation: AsyncThrowingStream<AgentStreamEvent, Error>
+        streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation
     ) async {
         self.isInternalRetry = true
@@ -472,29 +492,29 @@ public final class Agent: Sendable {
 
         // A dummy empty prompt in order to force the retry from the current history
         // the dummy will be removed from the history within `AgentProfile.onPrompt`
-        await self.streamHelper(
+        await self.invokeModelStream(
             prompt: "",
             options: buildRetryGenerationOptions(options, for: error),
             metadata: buildRetryMetadata(metadata),
             session: session,
-            resetInvocationState: resetInvocationState,
-            beforeCallUsage: session.usage,
             streamingInto: continuation
         )
     }
 
-    private func streamHelper(
+    private func invokeModelStream(
         prompt: String,
         options: GenerationOptions = GenerationOptions(),
         metadata: [String: any ConvertibleToGeneratedContent],
         session: LanguageModelSession,
-        resetInvocationState: () -> Void,
-        beforeCallUsage: LanguageModelSession.Usage,
-        streamingInto continuation: AsyncThrowingStream<AgentStreamEvent, Error>
+        streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation
     ) async {
-        defer {
-            resetInvocationState()
+        let beforeCallUsage = session.usage
+
+        do {
+            try await self.beforeModelCall()
+        } catch {
+
         }
 
         do {
@@ -513,10 +533,22 @@ public final class Agent: Sendable {
                     )
                 )
             }
-            continuation.finish()
+
+            do {
+                try await self.afterModelCall()
+            } catch {
+
+            }
+
             return
 
         } catch {
+            do {
+                try await self.afterModelCall()
+            } catch {
+
+            }
+
             let usage = calculateUsageDiff(
                 before: beforeCallUsage,
                 after: session.usage
@@ -526,11 +558,10 @@ public final class Agent: Sendable {
                 /// `history` already contains the response. Don't need to add anything.
                 continuation.yield(
                     .init(
-                        segments: error.response.segments,
+                        rawContent: error.response.segments.rawGeneratedContent,
                         usage: usage
                     )
                 )
-                continuation.finish()
                 return
             }
 
@@ -540,17 +571,90 @@ public final class Agent: Sendable {
                     options: options,
                     metadata: metadata,
                     session: session,
-                    resetInvocationState: resetInvocationState,
-                    beforeCallUsage: session.usage,
                     streamingInto: continuation
                 )
-                continuation.finish()
                 return
             }
 
-            continuation.finish(throwing: error)
+            if let error = error.toolCallError {
+                continuation.yield(
+                    .init(toolCall: error.toolCall, usage: usage)
+                )
+                await streamToolCall(
+                    toolCall: error.toolCall,
+                    streamingInto: continuation,
+                    invokeModelStream: {
+                        await invokeModelStream(
+                            prompt: "",
+                            options: options,
+                            metadata: buildRetryMetadata(metadata),
+                            session: session,
+                            streamingInto: continuation
+                        )
+                    }
+                )
+                return
+            }
+
+            continuation.yield(
+                .init(error: error, usage: usage)
+            )
+
+            return
         }
     }
+
+    private func streamToolCall(
+        toolCall: Transcript.ToolCall,
+        streamingInto continuation: AsyncStream<AgentStreamEvent>
+            .Continuation,
+        invokeModelStream: () async -> Void,
+    ) async {
+        /// Calling tool programmatically does not use any tokens.
+        let toolCallUsage = LanguageModelSession.Usage.zero
+
+        do {
+            try await self.beforeToolCall()
+
+            let tool = try getTool(for: toolCall)
+            let toolOutput = try await self.callTool(
+                for: toolCall,
+                using: tool
+            )
+
+            try await self.afterToolCall()
+
+            self.history.append(
+                .toolOutput(toolOutput)
+            )
+
+            continuation.yield(
+                .init(
+                    toolOutput: toolOutput,
+                    usage: toolCallUsage
+                )
+            )
+
+            await invokeModelStream()
+
+            return
+        } catch {
+            continuation.yield(
+                .init(
+                    error: error,
+                    usage: toolCallUsage
+                )
+            )
+        }
+
+    }
+}
+
+extension LanguageModelSession.Usage {
+    static let zero: LanguageModelSession.Usage = LanguageModelSession.Usage(
+        input: .init(totalTokenCount: 0, cachedTokenCount: 0),
+        output: .init(totalTokenCount: 0, reasoningTokenCount: 0)
+    )
 }
 
 // MARK: - Hook

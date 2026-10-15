@@ -26,7 +26,7 @@ public struct ModelStopData: Sendable {
         switch stopReason {
         case .endTurn(let response):
             return response.segments.rawGeneratedContent
-        case .refusal(let error):
+        case .refusal(_):
             return nil
         case .toolUse(let toolCall):
             return toolCall.arguments

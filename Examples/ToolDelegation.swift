@@ -22,9 +22,9 @@ private func testStream(_ agent: Agent) async throws {
 }
 
 private func testRespond(_ agent: Agent) async throws {
-    let response = try await agent.respond(to: "greet itsuki")
+    let response = await agent.respond(to: "greet itsuki")
     print("response: ", response)
-    let followUp = try await agent.respond(to: "who did you greet?")
+    let followUp = await agent.respond(to: "who did you greet?")
     print("follow up: ", followUp)
     printHistory(agent.transcript.history)
 }
