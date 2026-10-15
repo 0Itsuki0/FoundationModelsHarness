@@ -19,7 +19,7 @@ public struct AgentResult: Sendable {
         switch stopReason {
         case .endTurn(let response):
             return response.segments.rawGeneratedContent
-        case .refusal(let error):
+        case .refusal(_):
             return nil
         }
     }

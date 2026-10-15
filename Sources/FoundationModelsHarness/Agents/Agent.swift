@@ -187,7 +187,6 @@ public final class Agent: Sendable {
             metadata: metadata
         )
 
-        print("agent result: ", agentResult)
         return agentResult
     }
 
@@ -246,9 +245,8 @@ public final class Agent: Sendable {
 
                     modelStopData = await self.invokeModel(
                         to: "",
-                        options: options,
-                        // buildRetryGenerationOptions(options, for: error),
-                        metadata: buildRetryMetadata(metadata)
+                        options: generationOptionsForToolResponse(options),
+                        metadata: buildDummyPromptMetadata(metadata)
                     )
 
                     continue
@@ -287,7 +285,6 @@ public final class Agent: Sendable {
             } catch {
 
             }
-
         }
 
         let modelStopData: ModelStopData
@@ -300,16 +297,6 @@ public final class Agent: Sendable {
             let entry: Transcript.Response =
                 self.session.lastResponse
                 ?? .init(segments: [.text(.init(content: response.content))])
-
-            //            return AgentResult(
-            //                stopReason: .endTurn,
-            //                lastMessage: entry,
-            //                invocationState: invocationState,
-            //                usage: calculateTurnUsage(
-            //                    before: beforeCallUsage,
-            //                    after: session.usage
-            //                )
-            //            )
             modelStopData = ModelStopData(
                 response: entry,
                 invocationState: invocationState,
@@ -348,13 +335,6 @@ public final class Agent: Sendable {
                 )
 
             } else {
-
-                //            return AgentResult(
-                //                stopReason: .refusal,
-                //                lastMessage: .init(segments: []),
-                //                invocationState: invocationState,
-                //                usage: usage
-                //            )
                 modelStopData = ModelStopData(
                     error: error,
                     invocationState: invocationState,
@@ -381,7 +361,7 @@ public final class Agent: Sendable {
         return await self.invokeModel(
             to: "",
             options: buildRetryGenerationOptions(options, for: error),
-            metadata: buildRetryMetadata(metadata)
+            metadata: buildDummyPromptMetadata(metadata)
         )
     }
 
@@ -405,6 +385,17 @@ public final class Agent: Sendable {
         )
     }
 
+    private func generationOptionsForToolResponse(
+        _ options: GenerationOptions
+    ) -> GenerationOptions {
+        var options = options
+        /// Make sure the `toolCallingMode` is not `required` to avoid an infinite tool-calling loop (which is one of the FoundationModels SDK bug as of 2026.10.12)
+        if options.toolCallingMode == .required {
+            options.toolCallingMode = .allowed
+        }
+        return options
+    }
+
     /// Update tool calling mode based on the error to avoid infinite looping
     private func buildRetryGenerationOptions(
         _ options: GenerationOptions,
@@ -421,7 +412,7 @@ public final class Agent: Sendable {
         return options
     }
 
-    private func buildRetryMetadata(
+    private func buildDummyPromptMetadata(
         _ metadata: [String: any ConvertibleToGeneratedContent]
     ) -> [String: any ConvertibleToGeneratedContent] {
         var metadata = metadata
@@ -488,14 +479,14 @@ public final class Agent: Sendable {
             self.isInternalRetry = false
         }
 
-        let metadata = buildRetryMetadata(metadata)
+        let metadata = buildDummyPromptMetadata(metadata)
 
         // A dummy empty prompt in order to force the retry from the current history
         // the dummy will be removed from the history within `AgentProfile.onPrompt`
         await self.invokeModelStream(
             prompt: "",
             options: buildRetryGenerationOptions(options, for: error),
-            metadata: buildRetryMetadata(metadata),
+            metadata: buildDummyPromptMetadata(metadata),
             session: session,
             streamingInto: continuation
         )
@@ -543,11 +534,6 @@ public final class Agent: Sendable {
             return
 
         } catch {
-            do {
-                try await self.afterModelCall()
-            } catch {
-
-            }
 
             let usage = calculateUsageDiff(
                 before: beforeCallUsage,
@@ -562,6 +548,13 @@ public final class Agent: Sendable {
                         usage: usage
                     )
                 )
+                
+                do {
+                    try await self.afterModelCall()
+                } catch {
+                    
+                }
+
                 return
             }
 
@@ -580,14 +573,21 @@ public final class Agent: Sendable {
                 continuation.yield(
                     .init(toolCall: error.toolCall, usage: usage)
                 )
+                
+                do {
+                    try await self.afterModelCall()
+                } catch {
+                    
+                }
+
                 await streamToolCall(
                     toolCall: error.toolCall,
                     streamingInto: continuation,
                     invokeModelStream: {
                         await invokeModelStream(
                             prompt: "",
-                            options: options,
-                            metadata: buildRetryMetadata(metadata),
+                            options: generationOptionsForToolResponse(options),
+                            metadata: buildDummyPromptMetadata(metadata),
                             session: session,
                             streamingInto: continuation
                         )
@@ -599,6 +599,12 @@ public final class Agent: Sendable {
             continuation.yield(
                 .init(error: error, usage: usage)
             )
+            
+            do {
+                try await self.afterModelCall()
+            } catch {
+                
+            }
 
             return
         }
