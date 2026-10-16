@@ -28,8 +28,8 @@ public struct ModelStopData: Sendable {
             return response.segments.rawGeneratedContent
         case .refusal(_):
             return nil
-        case .toolUse(let toolCall):
-            return toolCall.arguments
+        case .toolUse(let toolCalls):
+            return GeneratedContent(kind: .array(toolCalls.map(\.arguments)))
         }
     }
 
@@ -44,11 +44,11 @@ public struct ModelStopData: Sendable {
     }
 
     init(
-        toolCall: Transcript.ToolCall,
+        toolCalls: Transcript.ToolCalls,
         invocationState: InvocationState,
         usage: LanguageModelSession.Usage
     ) {
-        self.stopReason = .toolUse(toolCall)
+        self.stopReason = .toolUse(toolCalls)
         self.invocationState = invocationState
         self.usage = usage
     }
@@ -70,7 +70,7 @@ public enum ModelStopReason: Sendable {
 
     case refusal(Error)
 
-    case toolUse(Transcript.ToolCall)
+    case toolUse(Transcript.ToolCalls)
 
     // TODO: - map foundation model error to specific stop reason
     //    init(error: Error) {

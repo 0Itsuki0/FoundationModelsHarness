@@ -28,7 +28,7 @@ func printStream(_ stream: AsyncStream<AgentStreamEvent>)
     async
 {
     for await snapshot in stream {
-        print("snapshot: ", snapshot.event)
+        print("snapshot: ", snapshot)
     }
     print()
 }

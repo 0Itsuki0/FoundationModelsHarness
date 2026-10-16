@@ -328,58 +328,47 @@ public final class Agent: Sendable {
                     usage: usage
                 )
             case .toolUse(let toolCall):
-                do {
-                    try await self.beforeToolCall()
+                let results = await self.callTools(
+                    toolCall,
+                    mode: .sequential,
+                    streamingInto: continuation
+                )
+                let mapped: [(Transcript.ToolOutput?, ToolCallError?)] =
+                    results.compactMap({
+                        switch $0 {
+                        case .success(let value):
+                            return (value, nil)
+                        case .failure(let value):
+                            return (nil, value)
+                        }
+                    })
 
-                    let tool = try getTool(for: toolCall)
-                    let toolOutput = try await self.callTool(
-                        for: toolCall,
-                        using: tool
-                    )
+                let success: [Transcript.ToolOutput] = mapped.compactMap({
+                    $0.0
+                })
+                let error: [ToolCallError] = mapped.compactMap({ $0.1 })
 
-                    try await self.afterToolCall()
+                self.history.append(
+                    contentsOf: success.map(Transcript.Entry.toolOutput)
+                )
 
-                    self.history.append(
-                        .toolOutput(toolOutput)
-                    )
-
-                    modelStopData = await self.invokeModel(
-                        prompt: nil,
-                        session: session,
-                        streamingInto: continuation
-                    )
-
-                    continue
-                } catch {
+                if !error.isEmpty {
                     return AgentResult(
                         error: error,
                         invocationState: invocationState,
                         usage: usage
                     )
                 }
+
+                modelStopData = await self.invokeModel(
+                    prompt: nil,
+                    session: session,
+                    streamingInto: continuation
+                )
+
+                continue
             }
         }
-
-        /// this branch should never be reach. Added only to avoid force-unwrapping.
-//        guard let agentResult else {
-//            let usage = calculateUsageDiff(
-//                before: beforeCallUsage,
-//                after: session.usage
-//            )
-//
-//            return AgentResult(
-//                error: LanguageModelError.refusal(
-//                    .init(
-//                        explanation: "Fail to get a response.",
-//                        debugDescription: "Fail to get a response."
-//                    )
-//                ),
-//                invocationState: invocationState,
-//                usage: usage
-//            )
-//        }
-//
-//        return agentResult
     }
 
     /// `prompt`: `nil` for not adding new prompt to the existing `history`
@@ -473,9 +462,9 @@ public final class Agent: Sendable {
             //
             //            }
 
-            else if let error = error.toolCallError {
+            else if let error = error.toolCallsReceived {
                 modelStopData = ModelStopData(
-                    toolCall: error.toolCall,
+                    toolCalls: error.toolCalls,
                     invocationState: invocationState,
                     usage: usage
                 )
@@ -666,49 +655,181 @@ public final class Agent: Sendable {
     //    }
 
     /// Important: **Never** call `continuation.finish` here
-    private func streamToolCall(
-        toolCall: Transcript.ToolCall,
-        streamingInto continuation: AsyncStream<AgentStreamEvent>
-            .Continuation,
-        invokeModelStream: () async -> Void,
-    ) async {
-        /// Calling tool programmatically does not use any tokens.
-        let toolCallUsage = LanguageModelSession.Usage.zero
+    //    private func streamToolCall(
+    //        toolCall: Transcript.ToolCall,
+    //        streamingInto continuation: AsyncStream<AgentStreamEvent>
+    //            .Continuation,
+    //        invokeModelStream: () async -> Void,
+    //    ) async {
+    //        /// Calling tool programmatically does not use any tokens.
+    //        let toolCallUsage = LanguageModelSession.Usage.zero
+    //
+    //        do {
+    //            try await self.beforeToolCall()
+    //
+    //            let tool = try getTool(for: toolCall)
+    //            let toolOutput = try await self.callTool(
+    //                for: toolCall,
+    //                using: tool
+    //            )
+    //
+    //            try await self.afterToolCall()
+    //
+    //            self.history.append(
+    //                .toolOutput(toolOutput)
+    //            )
+    //
+    //            continuation.yield(
+    //                .init(
+    //                    toolOutput: toolOutput,
+    //                    usage: toolCallUsage
+    //                )
+    //            )
+    //
+    //            await invokeModelStream()
+    //
+    //            return
+    //        } catch {
+    //            continuation.yield(
+    //                .init(
+    //                    error: error,
+    //                    usage: toolCallUsage
+    //                )
+    //            )
+    //        }
+    //
+    //    }
+}
 
+public enum ToolExecutionMode {
+    case sequential
+    case parallel
+}
+
+extension Agent {
+
+    private func callTools(
+        _ toolCalls: Transcript.ToolCalls,
+        mode: ToolExecutionMode,
+        streamingInto continuation: AsyncStream<AgentStreamEvent>
+            .Continuation?
+    )
+        async -> [Result<Transcript.ToolOutput, ToolCallError>]
+    {
+        await self.beforeTools()
+
+        let result: [Result<Transcript.ToolOutput, ToolCallError>]
+        switch mode {
+        case .sequential:
+            result = await callToolSequential(
+                toolCalls,
+                streamingInto: continuation
+            )
+        case .parallel:
+            result = await callToolsParallel(
+                toolCalls,
+                streamingInto: continuation
+            )
+        }
+
+        await self.afterTools()
+
+        return result
+    }
+
+    private func callToolsParallel(
+        _ toolCalls: Transcript.ToolCalls,
+        streamingInto continuation: AsyncStream<AgentStreamEvent>
+            .Continuation?
+    )
+        async -> [Result<Transcript.ToolOutput, ToolCallError>]
+    {
+
+        let results = await withTaskGroup(
+            of: (Result<Transcript.ToolOutput, ToolCallError>).self
+        ) { group in
+            var results: [Result<Transcript.ToolOutput, ToolCallError>] = []
+
+            for toolCall in toolCalls {
+                group.addTask { [callTool] in
+                    let result = await callTool(toolCall, continuation)
+                    return result.mapError({
+                        ToolCallError(toolCall: toolCall, error: $0)
+                    })
+                }
+            }
+
+            for await result in group {
+                results.append(result)
+            }
+
+            return results
+        }
+
+        return results
+
+    }
+
+    private func callToolSequential(
+        _ toolCalls: Transcript.ToolCalls,
+        streamingInto continuation: AsyncStream<AgentStreamEvent>
+            .Continuation?
+    )
+        async -> [Result<Transcript.ToolOutput, ToolCallError>]
+    {
+        var output: [Result<Transcript.ToolOutput, ToolCallError>] = []
+        for toolCall in toolCalls {
+            let result = await callTool(
+                for: toolCall,
+                streamingInto: continuation
+            )
+            output.append(
+                result.mapError({
+                    ToolCallError(toolCall: toolCall, error: $0)
+                })
+            )
+        }
+        return output
+    }
+
+    private func callTool(
+        for toolCall: Transcript.ToolCall,
+        streamingInto continuation: AsyncStream<AgentStreamEvent>
+            .Continuation?
+    ) async
+        -> Result<Transcript.ToolOutput, Error>
+    {
         do {
             try await self.beforeToolCall()
 
             let tool = try getTool(for: toolCall)
-            let toolOutput = try await self.callTool(
-                for: toolCall,
-                using: tool
+            
+            /// streaming event coming after hooks in case the input is transformed
+            continuation?.yield(.init(toolCall: toolCall))
+
+            let toolOutput = try await tool.call(
+                arguments: toolCall.arguments
             )
 
+            let outputTranscript = await Transcript.ToolOutput(
+                id: toolCall.id,
+                toolName: toolCall.toolName,
+                segments: self.toolOutputSegments(
+                    from: toolOutput,
+                    schemaName: tool.parameters.name
+                )
+            )
+
+            // TODO: this should be executed regardless of the above throws or not.
             try await self.afterToolCall()
+            
+            /// streaming event coming after hooks in case the output is transformed
+            continuation?.yield(.init(toolOutput: outputTranscript))
 
-            self.history.append(
-                .toolOutput(toolOutput)
-            )
-
-            continuation.yield(
-                .init(
-                    toolOutput: toolOutput,
-                    usage: toolCallUsage
-                )
-            )
-
-            await invokeModelStream()
-
-            return
+            return .success(outputTranscript)
         } catch {
-            continuation.yield(
-                .init(
-                    error: error,
-                    usage: toolCallUsage
-                )
-            )
+            return .failure(error)
         }
-
     }
 }
 
@@ -721,6 +842,14 @@ extension LanguageModelSession.Usage {
 
 // MARK: - Hook
 extension Agent {
+    private func beforeTools() async {
+        print(#function)
+    }
+
+    private func afterTools() async {
+        print(#function)
+    }
+
     private func beforeInvocation(prompt: Transcript.Prompt) async
         -> BeforeInvocationEventHandler.CallbackHandlingResult
     {
@@ -943,17 +1072,17 @@ extension Agent {
         _ toolCall: Transcript.ToolCall,
         attemptCount: Int
     ) async throws {
-        let tool = try getTool(for: toolCall)
-
-        /// **Programmatically** call the wrapper tool.
-        let outputTranscript = try await callTool(for: toolCall, using: tool)
-
-        /// programmatically triggers the `onToolOutput` Event
-        try await self.handleOnToolOutput(
-            toolCall: toolCall,
-            toolOutput: outputTranscript,
-            attemptCount: attemptCount + 1
-        )
+        //        let tool = try getTool(for: toolCall)
+        //
+        //        /// **Programmatically** call the wrapper tool.
+        //        let outputTranscript = try await callTool(for: toolCall, using: tool)
+        //
+        //        /// programmatically triggers the `onToolOutput` Event
+        //        try await self.handleOnToolOutput(
+        //            toolCall: toolCall,
+        //            toolOutput: outputTranscript,
+        //            attemptCount: attemptCount + 1
+        //        )
     }
 
     /// Handle Tool calls on the Profile.
@@ -1088,7 +1217,8 @@ extension Agent {
         /// This is needed because even if we have modified the session history with the new toolCall Parameter,
         /// (aka: history = historyTemp)
         /// the model will still use the previous tool name / arguments.
-        let outputTranscript = try await callTool(for: toolCall, using: tool)
+        let outputTranscript = try
+            (await callTool(for: toolCall, streamingInto: nil)).get()
 
         /// programmatically triggers the `onToolOutput` Event
         try await self.handleOnToolOutput(
@@ -1128,27 +1258,27 @@ extension Agent {
     }
 
     /// **Programmatically** call the wrapper tool
-    private func callTool(
-        for toolCall: Transcript.ToolCall,
-        using tool: InvocableTool
-    ) async throws
-        -> Transcript.ToolOutput
-    {
-        let toolOutput = try await tool.call(
-            arguments: toolCall.arguments
-        )
-
-        let outputTranscript = await Transcript.ToolOutput(
-            id: toolCall.id,
-            toolName: toolCall.toolName,
-            segments: self.toolOutputSegments(
-                from: toolOutput,
-                schemaName: tool.parameters.name
-            )
-        )
-
-        return outputTranscript
-    }
+    //    private func callTool(
+    //        for toolCall: Transcript.ToolCall,
+    //        using tool: InvocableTool
+    //    ) async throws
+    //        -> Transcript.ToolOutput
+    //    {
+    //        let toolOutput = try await tool.call(
+    //            arguments: toolCall.arguments
+    //        )
+    //
+    //        let outputTranscript = await Transcript.ToolOutput(
+    //            id: toolCall.id,
+    //            toolName: toolCall.toolName,
+    //            segments: self.toolOutputSegments(
+    //                from: toolOutput,
+    //                schemaName: tool.parameters.name
+    //            )
+    //        )
+    //
+    //        return outputTranscript
+    //    }
 
     private func createLocalAgent(with history: Transcript.HistoryView)
         -> AgentSnapshot
@@ -1235,8 +1365,8 @@ extension Error {
         return self.error(RetryModelGenerationError.self)
     }
 
-    var toolCallError: ToolCallError? {
-        return self.error(ToolCallError.self)
+    var toolCallsReceived: ToolCallsReceived? {
+        return self.error(ToolCallsReceived.self)
     }
 
     var responseFinishError: ResponseFinishedError? {

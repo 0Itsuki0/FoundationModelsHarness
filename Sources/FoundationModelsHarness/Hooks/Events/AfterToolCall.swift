@@ -60,7 +60,10 @@ public struct AfterToolCallEventHandler: HookEventHandler {
 
     }
 
-    /// the error thrown will be propagated up directly to the `respond` or `streamResponse` after the *After* hooks being called.
+        /// If an error is thrown here,
+    /// - the rest of the handlers for *this* event will be skipped
+    /// - the remaining *After* hooks will still be called
+    /// - error will be propagated up **directly** to the `AgentResult`
     public let callback: @Sendable (inout EventPayload) async throws -> Void
     public let options: HookCallbackOptions?
 

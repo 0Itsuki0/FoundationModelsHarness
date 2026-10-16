@@ -21,6 +21,8 @@ public struct AgentResult: Sendable {
             return response.segments.rawGeneratedContent
         case .refusal(_):
             return nil
+        case .toolCallError(_):
+            return nil
         }
     }
 
@@ -43,6 +45,16 @@ public struct AgentResult: Sendable {
         self.invocationState = invocationState
         self.usage = usage
     }
+
+    init(
+        error: [ToolCallError],
+        invocationState: InvocationState,
+        usage: LanguageModelSession.Usage
+    ) {
+        self.stopReason = .toolCallError(error)
+        self.invocationState = invocationState
+        self.usage = usage
+    }
 }
 
 /// - `delegatedToolOutput` - Delegated tool output.
@@ -50,6 +62,13 @@ public struct AgentResult: Sendable {
 /// - `endTurn` - Natural end of the model's turn
 public enum AgentStopReason: Sendable {
     case endTurn(Transcript.Response)
-    
-    case refusal(Error)    
+
+    case refusal(Error)
+
+    case toolCallError([ToolCallError])
+}
+
+public struct ToolCallError: Error, Sendable {
+    var toolCall: Transcript.ToolCall
+    var error: Error
 }

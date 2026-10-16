@@ -116,8 +116,8 @@ agent.addHook(
 
 // testing stream
 await printStream(agent.streamResponse(to: "hello. greet itsuki."))
-await printStream(
-    agent.streamResponse(to: "how's going?")
-)
+//await printStream(
+//    agent.streamResponse(to: "how's going?")
+//)
 //
 printHistory(agent.history)

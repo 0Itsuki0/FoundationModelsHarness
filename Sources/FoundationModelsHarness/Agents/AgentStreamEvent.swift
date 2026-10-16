@@ -9,22 +9,31 @@ import FoundationModels
 
 /// - `delegatedToolOutput` - Delegated tool output
 /// - `contentUpdate` - streaming event from the model
-public struct AgentStreamEvent: Sendable {
-    public let event: Event
+public enum AgentStreamEvent: Sendable {
+    //    public let event: Event
+    //
+    //    public var usage: LanguageModelSession.Usage
+    case contentUpdate(GeneratedContent, LanguageModelSession.Usage)
 
-    public var usage: LanguageModelSession.Usage
+    case refusal(Error, LanguageModelSession.Usage)
+
+    case toolUse(Transcript.ToolCall)
+
+    case toolOutput(Transcript.ToolOutput)
+
+    case agentResult(AgentResult, LanguageModelSession.Usage)
 
     public var rawContent: GeneratedContent? {
-        switch event {
-        case .contentUpdate(let content):
+        switch self {
+        case .contentUpdate(let content, _):
             return content
-        case .refusal(_):
+        case .refusal(_, _):
             return nil
         case .toolUse(let toolCall):
             return toolCall.arguments
         case .toolOutput(let toolOutput):
             return toolOutput.segments.rawGeneratedContent
-        case .agentResult(let result):
+        case .agentResult(let result, _):
             return result.rawContent
         }
     }
@@ -40,45 +49,39 @@ public struct AgentStreamEvent: Sendable {
     }
 
     init(rawContent: GeneratedContent, usage: LanguageModelSession.Usage) {
-        self.event = .contentUpdate(rawContent)
-        self.usage = usage
+        self = .contentUpdate(rawContent, usage)
     }
 
-    init(toolCall: Transcript.ToolCall, usage: LanguageModelSession.Usage) {
-        self.event = .toolUse(toolCall)
-        self.usage = usage
+    init(toolCall: Transcript.ToolCall) {
+        self = .toolUse(toolCall)
     }
-    
-    
-    init(toolOutput: Transcript.ToolOutput, usage: LanguageModelSession.Usage) {
-        self.event = .toolOutput(toolOutput)
-        self.usage = usage
+
+    init(toolOutput: Transcript.ToolOutput) {
+        self = .toolOutput(toolOutput)
     }
 
     init(error: Error, usage: LanguageModelSession.Usage) {
-        self.event = .refusal(error)
-        self.usage = usage
+        self = .refusal(error, usage)
     }
-    
+
     init(result: AgentResult, usage: LanguageModelSession.Usage) {
-        self.event = .agentResult(result)
-        self.usage = usage
+        self = .agentResult(result, usage)
     }
 }
 
-extension AgentStreamEvent {
-    public enum Event: Sendable {
-        case contentUpdate(GeneratedContent)
-
-        case refusal(Error)
-
-        case toolUse(Transcript.ToolCall)
-        
-        case toolOutput(Transcript.ToolOutput)
-        
-        case agentResult(AgentResult)
-    }
-}
+//enum AgentStreamEvent {
+//    //    public enum Event: Sendable {
+//    case contentUpdate(GeneratedContent, LanguageModelSession.Usage)
+//
+//    case refusal(Error, LanguageModelSession.Usage)
+//
+//    case toolUse(Transcript.ToolCall)
+//
+//    case toolOutput(Transcript.ToolOutput)
+//
+//    case agentResult(AgentResult, LanguageModelSession.Usage)
+//    //    }
+//}
 
 extension Array where Element == Transcript.Segment {
     var rawContent: String {
