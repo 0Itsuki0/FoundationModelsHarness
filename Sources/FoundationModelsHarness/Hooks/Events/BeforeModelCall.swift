@@ -17,9 +17,9 @@ import FoundationModels
 /// - Mutate `prompt` in place to modify what is sent to the model. You can use it, for example, for Context Injection.
 public struct BeforeModelCallEventHandler: HookEventHandler {
     static public let eventType: HookEventType = .beforeModelCall
-    
+
     public let id = HookID()
-    
+
     public struct EventPayload: Sendable {
         /// The prompt that triggers the event.
         ///
@@ -27,14 +27,14 @@ public struct BeforeModelCallEventHandler: HookEventHandler {
         ///
         /// - Mutate `prompt` in place to modify what will be sent to the model for generating a response.
         public var prompt: Transcript.Prompt
-        
+
         /// Following parameters accessible through`agent`:
         ///
         /// - `agentState`: Agent state persists across requests. Read/write.
         /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
         /// - `history`: The transcript entries excluding the leading instructions entry, if present, up to **(not including)** the current prompt
         public let agent: AgentSnapshot
-        
+
         /// Set to a non-nil value to cancel this model call. (`JSONValue.null` will cancel the call.)
         /// The value set here will be used as the model  response.
         ///
@@ -52,14 +52,14 @@ public struct BeforeModelCallEventHandler: HookEventHandler {
         /// `stopReason` on the returned `AgentResult` is `'endTurn'`.
         public var cancel: JSONValue? = nil
     }
-    
-        /// If an error is thrown here,
+
+    /// If an error is thrown here,
     /// - the rest of the handlers for *this* event will be skipped
     /// - the remaining *After* hooks will still be called
     /// - error will be propagated up **directly** to the `AgentResult`
     public let callback: @Sendable (inout EventPayload) async throws -> Void
     public let options: HookCallbackOptions?
-    
+
     public init(
         callback: @escaping @Sendable (inout EventPayload) async throws -> Void,
         options: HookCallbackOptions? = nil

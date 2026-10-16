@@ -50,7 +50,7 @@ public struct BeforeInvocationEventHandler: HookEventHandler {
         public var cancel: JSONValue? = nil
     }
 
-        /// If an error is thrown here,
+    /// If an error is thrown here,
     /// - the rest of the handlers for *this* event will be skipped
     /// - the remaining *After* hooks will still be called
     /// - error will be propagated up **directly** to the `AgentResult`

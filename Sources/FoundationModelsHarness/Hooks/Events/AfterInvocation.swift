@@ -17,4 +17,3 @@
 /// - retry: retry
 /// - attemptCount: the number of retry
 public struct AfterInvocationEventHandler {}
-
