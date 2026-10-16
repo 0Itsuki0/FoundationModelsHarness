@@ -22,9 +22,6 @@ extension SessionPropertyValues {
 
     @SessionPropertyEntry
     var hookRegistry: HookRegistry = .init()
-
-    @SessionPropertyEntry
-    var isInternalRetry: Bool = false
 }
 
 public typealias InvocationState = [String: JSONValue]
@@ -89,15 +86,6 @@ public final class Agent: Sendable {
         }
     }
 
-    private var isInternalRetry: Bool {
-        get {
-            session.properties.isInternalRetry
-        }
-        set {
-            session.properties.isInternalRetry = newValue
-        }
-    }
-
     private let tools: [ToolConfig]
     private var delegatedToolName: [String] {
         self.tools.filter({ $0.delegate }).map(\.invocableTool.name)
@@ -123,7 +111,6 @@ public final class Agent: Sendable {
     }
 
     private func setupBuiltInHooks() {
-        // TODO: - maybe changed this to use `endTurn` instead so that `AfterInvocation` hooks can be triggered
         self.addHook(
             AfterToolCallEventHandler(
                 callback: { [weak self] event in
@@ -176,7 +163,8 @@ public final class Agent: Sendable {
         options: GenerationOptions = GenerationOptions(),
         metadata: [String: any ConvertibleToGeneratedContent] = [:],
         contextOptions: ContextOptions = ContextOptions(),
-        invocationState: InvocationState = [:]
+        invocationState: InvocationState = [:],
+        toolExecutionMode: ToolExecutionMode = .parallel
     ) async -> AgentResult {
         return await self.respond(
             to: Prompt(prompt),
@@ -184,7 +172,8 @@ public final class Agent: Sendable {
             options: options,
             metadata: metadata,
             contextOptions: contextOptions,
-            invocationState: invocationState
+            invocationState: invocationState,
+            toolExecutionMode: toolExecutionMode
         )
     }
 
@@ -203,7 +192,8 @@ public final class Agent: Sendable {
         options: GenerationOptions = GenerationOptions(),
         metadata: [String: any ConvertibleToGeneratedContent] = [:],
         contextOptions: ContextOptions = ContextOptions(),
-        invocationState: InvocationState = [:]
+        invocationState: InvocationState = [:],
+        toolExecutionMode: ToolExecutionMode = .parallel
     ) async -> AgentResult {
         return await runInvocation(
             on: Prompt(prompt),
@@ -212,11 +202,14 @@ public final class Agent: Sendable {
             metadata: metadata,
             contextOptions: contextOptions,
             invocationState: invocationState,
+            toolExecutionMode: toolExecutionMode,
+            currentAttempt: 1,
             session: session,
             streamingInto: nil
         )
     }
 
+    /// One-Invocation wrapper.
     @discardableResult
     private func runInvocation(
         on prompt: Prompt,
@@ -225,15 +218,16 @@ public final class Agent: Sendable {
         metadata: [String: any ConvertibleToGeneratedContent] = [:],
         contextOptions: ContextOptions = ContextOptions(),
         invocationState: InvocationState = [:],
+        toolExecutionMode: ToolExecutionMode,
+        currentAttempt: Int,
         session: LanguageModelSession,
         streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation?
     ) async -> AgentResult {
-        self.isInternalRetry = false
         self.resetInvocationState()
         self.invocationState = invocationState
 
-        var prompt = await Transcript.Prompt(
+        var promptTranscript = await Transcript.Prompt(
             metadata: metadata,
             segments: SegmentBuilder.segments(from: prompt),
             options: options,
@@ -243,59 +237,102 @@ public final class Agent: Sendable {
             contextOptions: contextOptions
         )
 
-        let callbackResult = await beforeInvocation(prompt: prompt)
+        var agentResult: AgentResult
 
-        switch callbackResult {
+        let beforeInvocationResult = await beforeInvocation(
+            prompt: promptTranscript
+        )
+
+        switch beforeInvocationResult {
         case .cancelled(let response):
-            let result = AgentResult(
+            /// prompt and response already added to the history. simply returning the result here.
+            agentResult = AgentResult(
                 response: response,
                 invocationState: invocationState,
                 usage: .zero
             )
-            continuation?.yield(.init(result: result, usage: .zero))
-            return result
         case .continue(let updated):
-            prompt = updated
+            promptTranscript = updated
+            agentResult = await runAgentLoop(
+                on: promptTranscript,
+                session: session,
+                toolExecutionMode: toolExecutionMode,
+                streamingInto: continuation
+            )
         case .callbackThrows(let error):
-            let result = AgentResult(
+            agentResult = AgentResult(
                 error: error,
                 invocationState: invocationState,
                 usage: .zero
             )
-            continuation?.yield(.init(result: result, usage: .zero))
-            return result
         }
-
-        let agentResult: AgentResult = await runAgentLoop(
-            on: prompt,
-            session: session,
-            streamingInto: continuation
-        )
 
         continuation?.yield(.init(result: agentResult, usage: .zero))
 
         /// there shouldn't be any left, but just as an extra defensive check here.
         self.history.removeDummyPrompt()
 
-        do {
-            try await self.afterInvocation()
-        } catch {
+        let afterInvocationResult = await self.afterInvocation(
+            result: agentResult,
+            currentAttempt: currentAttempt
+        )
 
+        // TODO: - test after invocation
+        switch afterInvocationResult {
+        case .resume(let newPrompt):
+            return await runInvocation(
+                on: newPrompt,
+                schema: schema,
+                options: options,
+                metadata: metadata,
+                contextOptions: contextOptions,
+                /// using the updated invocation state, instead of the one in the argument
+                invocationState: self.invocationState,
+                toolExecutionMode: toolExecutionMode,
+                currentAttempt: 1,
+                session: session,
+                streamingInto: continuation
+            )
+        case .retry:
+            self.history = self.history.prefix(while: {
+                $0.id != promptTranscript.id
+            })
+            return await runInvocation(
+                on: prompt,
+                schema: schema,
+                options: options,
+                metadata: metadata,
+                contextOptions: contextOptions,
+                /// using the updated invocation state, instead of the one in the argument
+                invocationState:  self.invocationState,
+                toolExecutionMode: toolExecutionMode,
+                currentAttempt: currentAttempt + 1,
+                session: session,
+                streamingInto: continuation
+            )
+        case .callbackThrows(let error):
+            agentResult = AgentResult(
+                error: error,
+                invocationState: invocationState,
+                usage: .zero
+            )
+        case .finish:
+            break
         }
 
         self.resetInvocationState()
 
         return agentResult
-
     }
 
-    /// Start agent loop
+    /// agent loop.
     ///
     /// `continuation`: passed in if streaming.
     /// Important: **Never** call `continuation.finish` here
     private func runAgentLoop(
         on prompt: Transcript.Prompt,
         session: LanguageModelSession,
+        toolExecutionMode: ToolExecutionMode,
         streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation?
     ) async -> AgentResult {
@@ -330,7 +367,7 @@ public final class Agent: Sendable {
             case .toolUse(let toolCall):
                 let results = await self.callTools(
                     toolCall,
-                    mode: .sequential,
+                    mode: toolExecutionMode,
                     streamingInto: continuation
                 )
                 let mapped: [(Transcript.ToolOutput?, ToolCallError?)] =
@@ -487,25 +524,6 @@ public final class Agent: Sendable {
         return modelStopData
     }
 
-    //    private func retry(
-    //        for error: RetryModelGenerationError,
-    //        options: GenerationOptions,
-    //        metadata: [String: any ConvertibleToGeneratedContent],
-    //    ) async -> ModelStopData {
-    //        self.isInternalRetry = true
-    //        defer {
-    //            self.isInternalRetry = false
-    //        }
-    //
-    //        // A dummy empty prompt in order to force the retry from the current history
-    //        // the dummy will be removed from the history within `AgentProfile.onPrompt`
-    //        return await self.invokeModel(
-    //            to: Prompt {},
-    //            options: buildRetryGenerationOptions(options, for: error),
-    //            metadata: buildDummyPromptMetadata(metadata)
-    //        )
-    //    }
-
     private func calculateUsageDiff(
         before: LanguageModelSession.Usage,
         after: LanguageModelSession.Usage
@@ -572,7 +590,8 @@ public final class Agent: Sendable {
         options: GenerationOptions = GenerationOptions(),
         metadata: [String: any ConvertibleToGeneratedContent] = [:],
         contextOptions: ContextOptions = ContextOptions(),
-        invocationState: InvocationState = [:]
+        invocationState: InvocationState = [:],
+        toolExecutionMode: ToolExecutionMode = .parallel
     ) -> AsyncStream<AgentStreamEvent> {
         return self.streamResponse(
             to: Prompt(prompt),
@@ -580,7 +599,8 @@ public final class Agent: Sendable {
             options: options,
             metadata: metadata,
             contextOptions: contextOptions,
-            invocationState: invocationState
+            invocationState: invocationState,
+            toolExecutionMode: toolExecutionMode
         )
     }
 
@@ -590,9 +610,9 @@ public final class Agent: Sendable {
         options: GenerationOptions = GenerationOptions(),
         metadata: [String: any ConvertibleToGeneratedContent] = [:],
         contextOptions: ContextOptions = ContextOptions(),
-        invocationState: InvocationState = [:]
+        invocationState: InvocationState = [:],
+        toolExecutionMode: ToolExecutionMode = .parallel
     ) -> AsyncStream<AgentStreamEvent> {
-        self.isInternalRetry = false
         self.resetInvocationState()
         self.invocationState = invocationState
 
@@ -608,8 +628,7 @@ public final class Agent: Sendable {
                 [
                     prompt, schema, options, metadata, contextOptions,
                     invocationState,
-                    session, resetInvocationState, beforeInvocation,
-                    afterInvocation, runInvocation
+                    session, runInvocation, toolExecutionMode
                 ] in
 
                 let _ = await runInvocation(
@@ -619,6 +638,8 @@ public final class Agent: Sendable {
                     metadata,
                     contextOptions,
                     invocationState,
+                    toolExecutionMode,
+                    1,
                     session,
                     continuation
                 )
@@ -627,81 +648,9 @@ public final class Agent: Sendable {
             }
         }
     }
-
-    //    private func retryStream(
-    //        for error: RetryModelGenerationError,
-    //        options: GenerationOptions,
-    //        metadata: [String: any ConvertibleToGeneratedContent],
-    //        session: LanguageModelSession,
-    //        streamingInto continuation: AsyncStream<AgentStreamEvent>
-    //            .Continuation
-    //    ) async {
-    //        self.isInternalRetry = true
-    //        defer {
-    //            self.isInternalRetry = false
-    //        }
-    //
-    //        let metadata = buildDummyPromptMetadata(metadata)
-    //
-    //        // A dummy empty prompt in order to force the retry from the current history
-    //        // the dummy will be removed from the history within `AgentProfile.onPrompt`
-    //        await self.invokeModelStream(
-    //            prompt: Prompt {},
-    //            options: buildRetryGenerationOptions(options, for: error),
-    //            metadata: buildDummyPromptMetadata(metadata),
-    //            session: session,
-    //            streamingInto: continuation
-    //        )
-    //    }
-
-    /// Important: **Never** call `continuation.finish` here
-    //    private func streamToolCall(
-    //        toolCall: Transcript.ToolCall,
-    //        streamingInto continuation: AsyncStream<AgentStreamEvent>
-    //            .Continuation,
-    //        invokeModelStream: () async -> Void,
-    //    ) async {
-    //        /// Calling tool programmatically does not use any tokens.
-    //        let toolCallUsage = LanguageModelSession.Usage.zero
-    //
-    //        do {
-    //            try await self.beforeToolCall()
-    //
-    //            let tool = try getTool(for: toolCall)
-    //            let toolOutput = try await self.callTool(
-    //                for: toolCall,
-    //                using: tool
-    //            )
-    //
-    //            try await self.afterToolCall()
-    //
-    //            self.history.append(
-    //                .toolOutput(toolOutput)
-    //            )
-    //
-    //            continuation.yield(
-    //                .init(
-    //                    toolOutput: toolOutput,
-    //                    usage: toolCallUsage
-    //                )
-    //            )
-    //
-    //            await invokeModelStream()
-    //
-    //            return
-    //        } catch {
-    //            continuation.yield(
-    //                .init(
-    //                    error: error,
-    //                    usage: toolCallUsage
-    //                )
-    //            )
-    //        }
-    //
-    //    }
 }
 
-public enum ToolExecutionMode {
+public enum ToolExecutionMode: Sendable, Equatable, Hashable {
     case sequential
     case parallel
 }
@@ -803,7 +752,7 @@ extension Agent {
             try await self.beforeToolCall()
 
             let tool = try getTool(for: toolCall)
-            
+
             /// streaming event coming after hooks in case the input is transformed
             continuation?.yield(.init(toolCall: toolCall))
 
@@ -822,7 +771,7 @@ extension Agent {
 
             // TODO: this should be executed regardless of the above throws or not.
             try await self.afterToolCall()
-            
+
             /// streaming event coming after hooks in case the output is transformed
             continuation?.yield(.init(toolOutput: outputTranscript))
 
@@ -855,12 +804,7 @@ extension Agent {
     {
         print(#function)
 
-        /// history will contain the prompt as its last entry
-        ///
-        /// NOTE: **Not** modifying history directly at the start
-        /// so that in the case where handler throws
-        /// we still have a clean history (managed by the FoundationModels SDK. Untouched)
-
+        /// history will *not* contain the prompt as its last entry
         let handlers = hookRegistry.beforeInvocationHandlers
         var event = BeforeInvocationEventHandler.EventPayload(
             prompt: prompt,
@@ -871,8 +815,8 @@ extension Agent {
             do {
                 try await handler.callback(&event)
             } catch {
-                /// NOTE: not adding prompt to the history here.
-                /// In the case of `BeforeInvocationEventHandler` throws, no entries are added to the session history.
+                /// NOTE:
+                /// In the case of `BeforeInvocationEventHandler` throws, no entries are added to the session history, including the prompt.
                 return .callbackThrows(error)
             }
         }
@@ -931,8 +875,71 @@ extension Agent {
         print(#function)
     }
 
-    private func afterInvocation() async throws {
+    private func afterInvocation(
+        result: AgentResult,
+        currentAttempt: Int
+    ) async
+        -> AfterInvocationEventHandler.CallbackHandlingResult
+    {
         print(#function)
+        /// history will *not* contain the prompt as its last entry
+        let handlers = hookRegistry.afterInvocationHandlers
+        //        var event = AfterInvocationEventHandler
+        var event = AfterInvocationEventHandler.EventPayload(
+            result: result,
+            agent: agentSnapshot,
+            attemptCount: currentAttempt
+        )
+
+        for handler in handlers {
+            do {
+                try await handler.callback(&event)
+            } catch {
+                return .callbackThrows(error)
+            }
+        }
+
+        /// Invocation retry requested. last-wins. Take priority over `resume`
+        if event.retry {
+            return .retry
+        }
+
+        /// Invocation cancelled with a cancelled content. last-wins.
+        /// No `BeforeModelCall` opens, therefore there is no need to trigger `AfterModelCall` here.
+        if let resume = event.resume {
+            return .resume(resume)
+        }
+
+        return .finish
+    }
+
+    private func retryInvocation(
+        on prompt: Prompt,
+        previousPromptId: Transcript.Prompt.ID,
+        schema: GenerationSchema? = nil,
+        options: GenerationOptions = GenerationOptions(),
+        metadata: [String: any ConvertibleToGeneratedContent] = [:],
+        contextOptions: ContextOptions = ContextOptions(),
+        invocationState: InvocationState = [:],
+        toolExecutionMode: ToolExecutionMode,
+        currentAttempt: Int,
+        session: LanguageModelSession,
+        streamingInto continuation: AsyncStream<AgentStreamEvent>
+            .Continuation?
+    ) async -> AgentResult {
+        self.history = self.history.prefix(while: { $0.id != previousPromptId })
+        return await runInvocation(
+            on: prompt,
+            schema: schema,
+            options: options,
+            metadata: metadata,
+            contextOptions: contextOptions,
+            invocationState: invocationState,
+            toolExecutionMode: toolExecutionMode,
+            currentAttempt: currentAttempt + 1,
+            session: session,
+            streamingInto: nil
+        )
     }
 
     private func beforeToolCall() async throws {
@@ -1284,6 +1291,13 @@ extension Agent {
         -> AgentSnapshot
     {
         return AgentSnapshot(
+            session: self.session,
+            history: history
+        )
+    }
+
+    var agentSnapshot: AgentSnapshot {
+        AgentSnapshot(
             session: self.session,
             history: history
         )

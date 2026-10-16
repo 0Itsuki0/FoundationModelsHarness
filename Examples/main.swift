@@ -68,54 +68,25 @@ let agent = Agent(
 )
 
 agent.addHook(
-    BeforeInvocationEventHandler(callback: { event in
-        //        event.prompt.segments.append(
-        //            .text(.init(content: "Always start your response with ⭐."))
-        //        )
-        //        event.cancel = "Service unavailable"
-//        print(
-//            """
-//            BeforeInvocationEventHandler triggered: 
-//            invocationState: \(event.agent.invocationState)
-//            agentState: \(event.agent.agentState)
-//            history: \(event.agent.history)
-//            """
-//        )
-
-        event.agent.agentState["app_2"] = "test2"
+    AfterInvocationEventHandler(callback: { event in
+        if event.agent.invocationState["resume"]?.asBool() == true {
+            event.resume = Prompt { "how's going?" }
+            event.agent.invocationState["resume"] = false
+        }
     })
 )
-
-agent.addHook(
-    AfterToolCallEventHandler(callback: { event in
-        //            if event.attemptCount <= 3 {
-        //                event.retry = true
-        //                return
-        //            }
-        //            event.endTurn = "end!"
-    })
-)
-
-//agent.addHook(
-//    BeforeToolCallEventHandler(callback: { event in
-//        // modify tool calls
-//        event.toolCall.toolName = GreetingTool().name
-//        let argument = GreetingTool.Arguments(name: "⭐⭐itsuki⭐⭐")
-//        event.toolCall.arguments = argument.generatedContent
-//    })
-//)
 
 //agent.agentState["app"] = "Test"
 //let response = await agent.respond(
 //    to: "hello. greet itsuki",
-//    invocationState: ["test": 123]
+//    invocationState: ["resume": true]
 //)
 ////print("response: ", response.rawContent as Any)
 //print("-----")
 //await agent.respond(to: "how's going")
 
 // testing stream
-await printStream(agent.streamResponse(to: "hello. greet itsuki."))
+await printStream(agent.streamResponse(to: "hello. greet itsuki.", invocationState: ["resume": true]))
 //await printStream(
 //    agent.streamResponse(to: "how's going?")
 //)

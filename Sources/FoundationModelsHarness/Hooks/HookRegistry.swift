@@ -42,6 +42,10 @@ struct HookRegistry {
     @HookOrdered
     private(set) var afterToolCallHandlers: [AfterToolCallEventHandler]
     
+    @HookOrdered
+    private(set) var afterInvocationHandlers: [AfterInvocationEventHandler]
+
+    
 //    @HookOrdered
 //    private(set) var afterModelCallHandlers: [AfterToolCallEventHandler]
 //
@@ -54,10 +58,12 @@ struct HookRegistry {
         beforeInvocationHandlers: [BeforeInvocationEventHandler] = [],
         beforeToolCallHandlers: [BeforeToolCallEventHandler] = [],
         afterToolCallHandlers: [AfterToolCallEventHandler] = [],
+        afterInvocationHandlers: [AfterInvocationEventHandler] = []
     ) {
         self.beforeInvocationHandlers = beforeInvocationHandlers
         self.beforeToolCallHandlers = beforeToolCallHandlers
         self.afterToolCallHandlers = afterToolCallHandlers
+        self.afterInvocationHandlers = afterInvocationHandlers
     }
 
     @discardableResult
@@ -73,6 +79,10 @@ struct HookRegistry {
         if let hook = hook as? AfterToolCallEventHandler {
             self.afterToolCallHandlers.append(hook)
         }
+        
+        if let hook = hook as? AfterInvocationEventHandler {
+            self.afterInvocationHandlers.append(hook)
+        }
 
         return hook.id
     }
@@ -81,6 +91,7 @@ struct HookRegistry {
         self.beforeInvocationHandlers.remove(id)
         self.beforeToolCallHandlers.remove(id)
         self.afterToolCallHandlers.remove(id)
+        self.afterInvocationHandlers.remove(id)
     }
 
     mutating func removeHooks(for types: Set<HookEventType>) {
@@ -92,7 +103,8 @@ struct HookRegistry {
                 self.beforeToolCallHandlers.removeAll()
             case .afterToolCall:
                 self.afterToolCallHandlers.removeAll()
-                
+            case .afterInvocation:
+                self.afterInvocationHandlers.removeAll()
             default:
                 break
             }

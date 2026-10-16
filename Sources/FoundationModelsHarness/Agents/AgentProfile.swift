@@ -23,9 +23,6 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
     @SessionProperty(\.history)
     private var history
 
-    @SessionProperty(\.isInternalRetry)
-    private var isInternalRetry
-
     var body: some LanguageModelSession.DynamicProfile {
         Profile {
             instruction

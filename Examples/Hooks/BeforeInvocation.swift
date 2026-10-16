@@ -8,7 +8,7 @@
 import Foundation
 import FoundationModelsHarness
 
-/// Before model call hook:  triggered just before a prompt is sent to the model..
+/// Before invocation call hook:  Event triggered at the beginning of a new agent request
 ///
 /// Example:
 /// - `stateAccessing`: Read/write states that ca also be read/write from the tools / other hook handlers
@@ -63,7 +63,7 @@ private func setUpStateAccessing(_ agent: Agent) {
         BeforeInvocationEventHandler(callback: { event in
             print(
                 """
-                BeforeToolCallEventHandler triggered: 
+                BeforeInvocationEventHandler triggered: 
                 invocationState: \(event.agent.invocationState)
                 agentState: \(event.agent.agentState)
                 history: \(event.agent.history)
