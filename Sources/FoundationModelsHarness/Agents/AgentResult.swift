@@ -9,7 +9,7 @@ import FoundationModels
 
 public struct AgentResult: Sendable {
 
-    public let stopReason: AgentStopReason
+    public private(set) var stopReason: AgentStopReason
 
     public let invocationState: InvocationState
 
@@ -19,9 +19,7 @@ public struct AgentResult: Sendable {
         switch stopReason {
         case .endTurn(let response):
             return response.segments.rawGeneratedContent
-        case .refusal(_):
-            return nil
-        case .toolCallError(_):
+        default:
             return nil
         }
     }
@@ -41,6 +39,14 @@ public struct AgentResult: Sendable {
         invocationState: InvocationState,
         usage: LanguageModelSession.Usage
     ) {
+        if let error = error as? HookCallbackError {
+            self = .init(
+                errors: [error],
+                invocationState: invocationState,
+                usage: usage
+            )
+            return
+        }
         self.stopReason = .refusal(error)
         self.invocationState = invocationState
         self.usage = usage
@@ -55,6 +61,25 @@ public struct AgentResult: Sendable {
         self.invocationState = invocationState
         self.usage = usage
     }
+
+    init(
+        errors: [HookCallbackError],
+        invocationState: InvocationState,
+        usage: LanguageModelSession.Usage
+    ) {
+        self.stopReason = .hookCallbackError(errors)
+        self.invocationState = invocationState
+        self.usage = usage
+    }
+
+    mutating func setError(_ error: HookCallbackError) {
+        if case .hookCallbackError(var errors) = self.stopReason {
+            errors.append(error)
+            self.stopReason = .hookCallbackError(errors)
+        } else {
+            self.stopReason = .hookCallbackError([error])
+        }
+    }
 }
 
 /// - `delegatedToolOutput` - Delegated tool output.
@@ -66,9 +91,16 @@ public enum AgentStopReason: Sendable {
     case refusal(Error)
 
     case toolCallError([ToolCallError])
+
+    case hookCallbackError([HookCallbackError])
 }
 
 public struct ToolCallError: Error, Sendable {
     var toolCall: Transcript.ToolCall
+    var error: Error
+}
+
+public struct HookCallbackError: Error, Sendable {
+    var event: HookEventType
     var error: Error
 }

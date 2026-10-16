@@ -11,9 +11,8 @@ import FoundationModelsHarness
 /// After invocation call hook:  Event triggered at the end of an agent request.
 ///
 /// Example:
-/// - `stateAccessing`: Read/write states that ca also be read/write from the tools / other hook handlers
-/// - `cancellation`: Cancel the model invocation with a message
-/// - `promptMutation`: change the prompt
+/// - `retry`: request a retry of the full invocation.
+/// - `resume`: Set to a non-nil value to re-invoke the agent. 
 enum AfterInvocationExample {
     case retry
     case resume

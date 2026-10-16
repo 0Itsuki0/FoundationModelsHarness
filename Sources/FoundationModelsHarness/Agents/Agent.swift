@@ -261,7 +261,7 @@ public final class Agent: Sendable {
             )
         case .callbackThrows(let error):
             agentResult = AgentResult(
-                error: error,
+                error: HookCallbackError(event: .beforeInvocation, error: error),
                 invocationState: invocationState,
                 usage: .zero
             )
@@ -277,7 +277,6 @@ public final class Agent: Sendable {
             currentAttempt: currentAttempt
         )
 
-        // TODO: - test after invocation
         switch afterInvocationResult {
         case .resume(let newPrompt):
             return await runInvocation(
@@ -304,18 +303,14 @@ public final class Agent: Sendable {
                 metadata: metadata,
                 contextOptions: contextOptions,
                 /// using the updated invocation state, instead of the one in the argument
-                invocationState:  self.invocationState,
+                invocationState: self.invocationState,
                 toolExecutionMode: toolExecutionMode,
                 currentAttempt: currentAttempt + 1,
                 session: session,
                 streamingInto: continuation
             )
         case .callbackThrows(let error):
-            agentResult = AgentResult(
-                error: error,
-                invocationState: invocationState,
-                usage: .zero
-            )
+            agentResult.setError(.init(event: .afterInvocation, error: error))
         case .finish:
             break
         }
