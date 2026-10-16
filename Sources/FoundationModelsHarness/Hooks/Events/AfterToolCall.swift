@@ -18,6 +18,8 @@ public struct AfterToolCallEventHandler: HookEventHandler {
         /// Read only.
         public let toolCall: Transcript.ToolCall
 
+        // TODO: - change this to a result where the failure is the error thrown by the tool
+        // error will be penetrated directly up to agent result after the *After* hooks being called.
         /// The output of the tool call.
         ///
         /// Read/write. Last-wins.
@@ -58,7 +60,7 @@ public struct AfterToolCallEventHandler: HookEventHandler {
 
     }
 
-    /// the error thrown will be propagated up directly to the `respond` or `streamResponse`.
+    /// the error thrown will be propagated up directly to the `respond` or `streamResponse` after the *After* hooks being called.
     public let callback: @Sendable (inout EventPayload) async throws -> Void
     public let options: HookCallbackOptions?
 

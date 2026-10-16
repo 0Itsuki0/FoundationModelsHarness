@@ -62,7 +62,7 @@ func segments(from prompt: PromptRepresentable) async -> [Transcript
 //
 let agent = Agent(
     tools: [
-        //        .init(tool: GreetingTool(), delegate: false)
+        .init(tool: GreetingTool(), delegate: false)
     ],
     instruction: .init("You are a helpful assistant.")
 )
@@ -73,15 +73,15 @@ agent.addHook(
         //            .text(.init(content: "Always start your response with ⭐."))
         //        )
         //        event.cancel = "Service unavailable"
-        print(
-                """
-                BeforeToolCallEventHandler triggered: 
-                invocationState: \(event.agent.invocationState)
-                agentState: \(event.agent.agentState)
-                history: \(event.agent.history)
-                """
-        )
-        
+//        print(
+//            """
+//            BeforeInvocationEventHandler triggered: 
+//            invocationState: \(event.agent.invocationState)
+//            agentState: \(event.agent.agentState)
+//            history: \(event.agent.history)
+//            """
+//        )
+
         event.agent.agentState["app_2"] = "test2"
     })
 )
@@ -105,20 +105,19 @@ agent.addHook(
 //    })
 //)
 
-
-agent.agentState["app"] = "Test"
-let response = await agent.respond(
-    to: "hello",
-    invocationState: ["test": 123]
-)
-//print("response: ", response.rawContent as Any)
-print("-----")
-await agent.respond(to: "how's going")
+//agent.agentState["app"] = "Test"
+//let response = await agent.respond(
+//    to: "hello. greet itsuki",
+//    invocationState: ["test": 123]
+//)
+////print("response: ", response.rawContent as Any)
+//print("-----")
+//await agent.respond(to: "how's going")
 
 // testing stream
-//    await printStream(agent.streamResponse(to: "hello. greet itsuki."))
-//    try await printStream(
-//        agent.streamResponse(to: "how's going?")
-//    )
+await printStream(agent.streamResponse(to: "hello. greet itsuki."))
+await printStream(
+    agent.streamResponse(to: "how's going?")
+)
 //
 printHistory(agent.history)

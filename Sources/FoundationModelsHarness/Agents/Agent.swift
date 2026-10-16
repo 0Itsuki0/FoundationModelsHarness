@@ -205,19 +205,33 @@ public final class Agent: Sendable {
         contextOptions: ContextOptions = ContextOptions(),
         invocationState: InvocationState = [:]
     ) async -> AgentResult {
+        return await runInvocation(
+            on: Prompt(prompt),
+            schema: schema,
+            options: options,
+            metadata: metadata,
+            contextOptions: contextOptions,
+            invocationState: invocationState,
+            session: session,
+            streamingInto: nil
+        )
+    }
+
+    @discardableResult
+    private func runInvocation(
+        on prompt: Prompt,
+        schema: GenerationSchema? = nil,
+        options: GenerationOptions = GenerationOptions(),
+        metadata: [String: any ConvertibleToGeneratedContent] = [:],
+        contextOptions: ContextOptions = ContextOptions(),
+        invocationState: InvocationState = [:],
+        session: LanguageModelSession,
+        streamingInto continuation: AsyncStream<AgentStreamEvent>
+            .Continuation?
+    ) async -> AgentResult {
         self.isInternalRetry = false
         self.resetInvocationState()
         self.invocationState = invocationState
-
-        defer {
-            do {
-                try await self.afterInvocation()
-            } catch {
-
-            }
-
-            self.resetInvocationState()
-        }
 
         var prompt = await Transcript.Prompt(
             metadata: metadata,
@@ -233,40 +247,67 @@ public final class Agent: Sendable {
 
         switch callbackResult {
         case .cancelled(let response):
-            return AgentResult(
+            let result = AgentResult(
                 response: response,
                 invocationState: invocationState,
                 usage: .zero
             )
+            continuation?.yield(.init(result: result, usage: .zero))
+            return result
         case .continue(let updated):
             prompt = updated
         case .callbackThrows(let error):
-            return AgentResult(
+            let result = AgentResult(
                 error: error,
                 invocationState: invocationState,
                 usage: .zero
             )
+            continuation?.yield(.init(result: result, usage: .zero))
+            return result
         }
 
-        let agentResult: AgentResult = await agentLoop(
-            to: prompt
+        let agentResult: AgentResult = await runAgentLoop(
+            on: prompt,
+            session: session,
+            streamingInto: continuation
         )
 
+        continuation?.yield(.init(result: agentResult, usage: .zero))
+
+        /// there shouldn't be any left, but just as an extra defensive check here.
+        self.history.removeDummyPrompt()
+
+        do {
+            try await self.afterInvocation()
+        } catch {
+
+        }
+
+        self.resetInvocationState()
+
         return agentResult
+
     }
 
-    private func agentLoop(
-        to prompt: Transcript.Prompt,
+    /// Start agent loop
+    ///
+    /// `continuation`: passed in if streaming.
+    /// Important: **Never** call `continuation.finish` here
+    private func runAgentLoop(
+        on prompt: Transcript.Prompt,
+        session: LanguageModelSession,
+        streamingInto continuation: AsyncStream<AgentStreamEvent>
+            .Continuation?
     ) async -> AgentResult {
         let beforeCallUsage = session.usage
 
         var modelStopData = await invokeModel(
-            to: prompt,
+            prompt: prompt,
+            session: session,
+            streamingInto: continuation
         )
 
-        var agentResult: AgentResult?
-
-        agentLoop: while agentResult == nil {
+        agentLoop: while true {
             let usage = calculateUsageDiff(
                 before: beforeCallUsage,
                 after: session.usage
@@ -275,19 +316,17 @@ public final class Agent: Sendable {
             switch modelStopData.stopReason {
 
             case .endTurn(let response):
-                agentResult = AgentResult(
+                return AgentResult(
                     response: response,
                     invocationState: invocationState,
                     usage: usage
                 )
-                break agentLoop
             case .refusal(let error):
-                agentResult = AgentResult(
+                return AgentResult(
                     error: error,
                     invocationState: invocationState,
                     usage: usage
                 )
-                break agentLoop
             case .toolUse(let toolCall):
                 do {
                     try await self.beforeToolCall()
@@ -304,27 +343,54 @@ public final class Agent: Sendable {
                         .toolOutput(toolOutput)
                     )
 
-                    modelStopData = await self.invokeModel(to: nil)
+                    modelStopData = await self.invokeModel(
+                        prompt: nil,
+                        session: session,
+                        streamingInto: continuation
+                    )
 
                     continue
                 } catch {
-                    agentResult = AgentResult(
+                    return AgentResult(
                         error: error,
                         invocationState: invocationState,
                         usage: usage
                     )
-
-                    break agentLoop
                 }
             }
         }
 
-        return agentResult!
+        /// this branch should never be reach. Added only to avoid force-unwrapping.
+//        guard let agentResult else {
+//            let usage = calculateUsageDiff(
+//                before: beforeCallUsage,
+//                after: session.usage
+//            )
+//
+//            return AgentResult(
+//                error: LanguageModelError.refusal(
+//                    .init(
+//                        explanation: "Fail to get a response.",
+//                        debugDescription: "Fail to get a response."
+//                    )
+//                ),
+//                invocationState: invocationState,
+//                usage: usage
+//            )
+//        }
+//
+//        return agentResult
     }
 
     /// `prompt`: `nil` for not adding new prompt to the existing `history`
+    ///
+    /// `continuation`: passed in if streaming.
+    /// Important: **Never** call `continuation.finish` here
     private func invokeModel(
-        to prompt: Transcript.Prompt?
+        prompt: Transcript.Prompt?,
+        session: LanguageModelSession,
+        streamingInto continuation: AsyncStream<AgentStreamEvent>
+            .Continuation?
     ) async -> ModelStopData {
 
         let beforeCallUsage = session.usage
@@ -344,15 +410,36 @@ public final class Agent: Sendable {
         let modelStopData: ModelStopData
 
         do {
-            let response = try await session.respond(
-                to: "",
-                metadata: dummyPromptMetadata
-            )
+            if let continuation {
+                for try await snapshot in session.streamResponse(
+                    to: "",
+                    metadata: dummyPromptMetadata
+                ) {
+                    /// Always calculate the usage instead of using response.usage
+                    /// because `snapshot.usage` sometimes does not reflect the full usage of this invoke
+                    continuation.yield(
+                        .init(
+                            rawContent: snapshot.rawContent,
+                            usage: calculateUsageDiff(
+                                before: beforeCallUsage,
+                                after: session.usage
+                            )
+                        )
+                    )
+                }
+            } else {
+                let _ = try await session.respond(
+                    to: "",
+                    metadata: dummyPromptMetadata
+                )
+            }
 
             let entry: Transcript.Response =
                 self.session.lastResponse
-                ?? .init(segments: [.text(.init(content: response.content))])
+                ?? .init(segments: [.text(.init(content: ""))])
 
+            /// Always calculate the usage instead of using response.usage
+            /// because `response.usage` sometimes does not reflect the full usage of this invoke
             modelStopData = ModelStopData(
                 response: entry,
                 invocationState: invocationState,
@@ -518,7 +605,11 @@ public final class Agent: Sendable {
     ) -> AsyncStream<AgentStreamEvent> {
         self.isInternalRetry = false
         self.resetInvocationState()
+        self.invocationState = invocationState
 
+        /// Important:
+        /// This function is the **only** place to call `continuation.finish` to ensure the `afterInvocation` is handled correctly.
+        /// **Never** call `continuation.finish` on child functions
         return AsyncStream<AgentStreamEvent> { continuation in
             // Required to convert ConvertibleToGeneratedContent to GeneratedContent to avoid the following concurrency error:
             // Passing closure as a 'sending' parameter risks causing data races between code in the current isolation context and concurrent execution of the closure
@@ -526,28 +617,21 @@ public final class Agent: Sendable {
 
             Task {
                 [
-                    session, resetInvocationState, metadata, beforeInvocation,
-                    afterInvocation
+                    prompt, schema, options, metadata, contextOptions,
+                    invocationState,
+                    session, resetInvocationState, beforeInvocation,
+                    afterInvocation, runInvocation
                 ] in
 
-                // TODO: - handle callback result
-                //                let callbackResult = await beforeInvocation(prompt)
-
-                defer {
-                    do {
-                        try await afterInvocation()
-                    } catch {
-
-                    }
-
-                    resetInvocationState()
-                }
-
-                await invokeModelStream(
-                    prompt: prompt,
-                    metadata: metadata,
-                    session: session,
-                    streamingInto: continuation,
+                let _ = await runInvocation(
+                    Prompt(prompt),
+                    schema,
+                    options,
+                    metadata,
+                    contextOptions,
+                    invocationState,
+                    session,
+                    continuation
                 )
 
                 continuation.finish()
@@ -581,124 +665,7 @@ public final class Agent: Sendable {
     //        )
     //    }
 
-    private func invokeModelStream(
-        prompt: Prompt,
-        options: GenerationOptions = GenerationOptions(),
-        metadata: [String: any ConvertibleToGeneratedContent],
-        session: LanguageModelSession,
-        streamingInto continuation: AsyncStream<AgentStreamEvent>
-            .Continuation
-    ) async {
-        let beforeCallUsage = session.usage
-
-        do {
-            try await self.beforeModelCall()
-        } catch {
-
-        }
-
-        do {
-            for try await snapshot in session.streamResponse(
-                to: prompt,
-                metadata: metadata
-            ) {
-                /// the `calculateTurnUsage` is essentially the same as `snapshot.usage`in this case
-                continuation.yield(
-                    .init(
-                        rawContent: snapshot.rawContent,
-                        usage: calculateUsageDiff(
-                            before: beforeCallUsage,
-                            after: session.usage
-                        )
-                    )
-                )
-            }
-
-            do {
-                try await self.afterModelCall()
-            } catch {
-
-            }
-
-            return
-
-        } catch {
-
-            let usage = calculateUsageDiff(
-                before: beforeCallUsage,
-                after: session.usage
-            )
-
-            if let error = error.responseFinishError {
-                /// `history` already contains the response. Don't need to add anything.
-                continuation.yield(
-                    .init(
-                        rawContent: error.response.segments.rawGeneratedContent,
-                        usage: usage
-                    )
-                )
-
-                do {
-                    try await self.afterModelCall()
-                } catch {
-
-                }
-
-                return
-            }
-
-            //            if let error = error.retryError {
-            //                await retryStream(
-            //                    for: error,
-            //                    options: options,
-            //                    metadata: metadata,
-            //                    session: session,
-            //                    streamingInto: continuation
-            //                )
-            //                return
-            //            }
-
-            if let error = error.toolCallError {
-                continuation.yield(
-                    .init(toolCall: error.toolCall, usage: usage)
-                )
-
-                do {
-                    try await self.afterModelCall()
-                } catch {
-
-                }
-
-                await streamToolCall(
-                    toolCall: error.toolCall,
-                    streamingInto: continuation,
-                    invokeModelStream: {
-                        await invokeModelStream(
-                            prompt: Prompt {},
-                            options: generationOptionsForToolResponse(options),
-                            metadata: buildDummyPromptMetadata(metadata),
-                            session: session,
-                            streamingInto: continuation
-                        )
-                    }
-                )
-                return
-            }
-
-            continuation.yield(
-                .init(error: error, usage: usage)
-            )
-
-            do {
-                try await self.afterModelCall()
-            } catch {
-
-            }
-
-            return
-        }
-    }
-
+    /// Important: **Never** call `continuation.finish` here
     private func streamToolCall(
         toolCall: Transcript.ToolCall,
         streamingInto continuation: AsyncStream<AgentStreamEvent>

@@ -47,10 +47,10 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
 //                toolOutput: toolOutput
 //            )
 //        }
-////        .onToolCall(perform: handleOnToolCall)
-//        .onToolCall {
-//            throw ToolCallError(toolCall: $0)
-//        }
+//        .onToolCall(perform: handleOnToolCall)
+        .onToolCall {
+            throw ToolCallError(toolCall: $0)
+        }
 //        .onResponse(perform: handleOnResponse)
     }
 

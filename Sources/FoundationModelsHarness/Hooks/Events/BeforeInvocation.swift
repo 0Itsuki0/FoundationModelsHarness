@@ -50,7 +50,7 @@ public struct BeforeInvocationEventHandler: HookEventHandler {
         public var cancel: JSONValue? = nil
     }
 
-    /// the error thrown will be propagated up directly to the `respond` or `streamResponse`.
+    /// the error thrown will be propagated up directly to the `respond` or `streamResponse` after the *After* hooks being called.
     public let callback: @Sendable (inout EventPayload) async throws -> Void
     public let options: HookCallbackOptions?
 

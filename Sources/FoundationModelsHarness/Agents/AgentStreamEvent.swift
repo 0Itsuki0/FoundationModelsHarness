@@ -24,6 +24,8 @@ public struct AgentStreamEvent: Sendable {
             return toolCall.arguments
         case .toolOutput(let toolOutput):
             return toolOutput.segments.rawGeneratedContent
+        case .agentResult(let result):
+            return result.rawContent
         }
     }
 
@@ -57,6 +59,11 @@ public struct AgentStreamEvent: Sendable {
         self.event = .refusal(error)
         self.usage = usage
     }
+    
+    init(result: AgentResult, usage: LanguageModelSession.Usage) {
+        self.event = .agentResult(result)
+        self.usage = usage
+    }
 }
 
 extension AgentStreamEvent {
@@ -68,6 +75,8 @@ extension AgentStreamEvent {
         case toolUse(Transcript.ToolCall)
         
         case toolOutput(Transcript.ToolOutput)
+        
+        case agentResult(AgentResult)
     }
 }
 
