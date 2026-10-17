@@ -68,16 +68,16 @@ let agent = Agent(
 )
 
 agent.addHook(
-    AfterModelCallEventHandler(callback: { event in
-        if event.attemptCount == 1 {
-            event.retry = true
+    BeforeToolsEventHandler(callback: { event in
+        if event.toolCalls.count > 1 {
+            event.cancel = "one tool at a time."
         }
     })
 )
 
 //agent.agentState["app"] = "Test"
 let response = await agent.respond(
-    to: "hello. greet itsuki",
+    to: "hello. greet itsuki and dan",
     invocationState: ["resume": true]
 )
 ////print("response: ", response.rawContent as Any)
@@ -90,4 +90,4 @@ let response = await agent.respond(
 //    agent.streamResponse(to: "how's going?")
 //)
 //
-//printHistory(agent.history)
+printHistory(agent.history)

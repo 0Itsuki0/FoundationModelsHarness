@@ -85,13 +85,14 @@ public struct ToolOutputWrapper: ConvertibleToGeneratedContent {
     }
 
     @Generable
-    enum Status {
+    public enum Status {
         case success
         case error
     }
 
-    let status: Status
-    let content: JSONValue
+    public let status: Status
+    public let content: JSONValue
+
     init(_ content: JSONValue, status: Status) {
         self.content = content
         self.status = .error

@@ -654,20 +654,29 @@ extension Agent {
     )
         async -> [Result<Transcript.ToolOutput, ToolCallError>]
     {
-        await self.beforeTools()
-
         let result: [Result<Transcript.ToolOutput, ToolCallError>]
-        switch mode {
-        case .sequential:
-            result = await callToolSequential(
-                toolCalls,
-                streamingInto: continuation
-            )
-        case .parallel:
-            result = await callToolsParallel(
-                toolCalls,
-                streamingInto: continuation
-            )
+
+        /// no need to stream the toolCalls before the hook callback here
+        /// because it is already streamed as a model stop
+        let beforeToolResult = await self.beforeTools(toolCalls: toolCalls)
+
+        switch beforeToolResult {
+
+        case .cancelled(let outputs):
+            result = outputs.map(Result.success)
+        case .continue:
+            switch mode {
+            case .sequential:
+                result = await callToolSequential(
+                    toolCalls,
+                    streamingInto: continuation
+                )
+            case .parallel:
+                result = await callToolsParallel(
+                    toolCalls,
+                    streamingInto: continuation
+                )
+            }
         }
 
         await self.afterTools()
@@ -782,8 +791,47 @@ extension LanguageModelSession.Usage {
 
 // MARK: - Hook
 extension Agent {
-    private func beforeTools() async {
+    private func beforeTools(toolCalls: Transcript.ToolCalls) async
+        -> BeforeToolsEventHandler.CallbackHandlingResult
+    {
         print(#function)
+
+        let handlers = hookRegistry.beforeToolsHandlers
+        var event = BeforeToolsEventHandler.EventPayload(
+            toolCalls: Array(toolCalls),
+            agent: agentSnapshot
+        )
+
+        for handler in handlers {
+            await handler.callback(&event)
+        }
+
+        /// All Tool calls cancelled with a cancelled content. last-wins.
+        /// Prompt is already in the history so there is no need to add it.
+        if let cancel = event.cancel {
+            let toolOutput = ToolOutputWrapper(cancel, status: .error)
+            let outputTranscripts = toolCalls.map { toolCall in
+                Transcript.ToolOutput(
+                    id: toolCall.id,
+                    toolName: toolCall.toolName,
+                    segments: toolOutput.segments
+                )
+            }
+
+            /// Add the response entry to the history.
+            ///
+            /// Doing this before calling the `handleOnResponse` because
+            /// the when `onResponse` is triggered by the system,
+            /// the `history` will contains the last `Transcript.Response`
+            self.history.append(
+                contentsOf: outputTranscripts.map(Transcript.Entry.toolOutput)
+            )
+
+            return .cancelled(outputTranscripts)
+        }
+
+        return .continue
+
     }
 
     private func afterTools() async {

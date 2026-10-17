@@ -10,7 +10,6 @@ import FoundationModelsHarness
 /// Before model call hook: triggered just before the model is invoked.
 ///
 /// - set `cancel` to cancel a model call, for example, in the case of a budget reached.
-
 private let first = "Hello. Greet user."
 private let second = "How's going."
 

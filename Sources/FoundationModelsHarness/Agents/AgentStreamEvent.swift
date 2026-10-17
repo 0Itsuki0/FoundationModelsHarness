@@ -17,7 +17,7 @@ public enum AgentStreamEvent: Sendable {
 
     case refusal(Error, LanguageModelSession.Usage)
 
-    case toolUse(Transcript.ToolCall)
+    case toolCall(Transcript.ToolCall)
 
     case toolResult(Result<Transcript.ToolOutput, Error>)
 
@@ -31,7 +31,7 @@ public enum AgentStreamEvent: Sendable {
             return stopData.rawContent
         case .refusal(_, _):
             return nil
-        case .toolUse(let toolCall):
+        case .toolCall(let toolCall):
             return toolCall.arguments
         case .toolResult(let result):
             switch result {
@@ -66,7 +66,7 @@ public enum AgentStreamEvent: Sendable {
     }
 
     init(toolCall: Transcript.ToolCall) {
-        self = .toolUse(toolCall)
+        self = .toolCall(toolCall)
     }
 
     init(toolResult: Result<Transcript.ToolOutput, ToolCallError>) {
@@ -93,14 +93,14 @@ extension AgentStreamEvent: CustomStringConvertible {
             return "(Model stop) \(stopData.description)"
         case .refusal(let error, _):
             return "(Refusal) \(error.localizedDescription)"
-        case .toolUse(let toolCall):
-            return "(Tool use) \(toolCall.description)"
+        case .toolCall(let toolCall):
+            return "(Tool call) \(toolCall.description)"
         case .toolResult(let result):
             switch result {
             case .success(let success):
                 return success.description
             case .failure(let failure):
-                return "(Tool output) \(failure.localizedDescription)"
+                return "(Tool output error) \(failure.localizedDescription)"
             }
         case .agentResult(let result, _):
             return "(Agent result) \(result.description)"

@@ -15,12 +15,16 @@ public enum HookEventType: Sendable, Hashable, Equatable {
 
     /// Triggered just before the model is invoked.
     case beforeModelCall
+    
+    case beforeTools
 
     /// Triggered just before a tool is executed, aka: before `Tool.call(arguments:)` is called.
     case beforeToolCall
 
     /// Triggered after tool invocation completes. Uses reverse callback ordering.
     case afterToolCall
+    
+    case afterTools
 
     /// Triggered at the end of an agent request. Uses reverse callback ordering.
     case afterInvocation
@@ -31,9 +35,11 @@ public enum HookEventType: Sendable, Hashable, Equatable {
         switch self {
         case .beforeInvocation: false
         case .beforeModelCall: false
+        case .beforeTools: false
         case .beforeToolCall: false
 
         case .afterToolCall: true
+        case .afterTools: true
         case .afterInvocation: true
         case .afterModelCall: true
         }
