@@ -49,6 +49,9 @@ struct HookRegistry {
     private(set) var afterToolCallHandlers: [AfterToolCallEventHandler]
 
     @HookOrdered
+    private(set) var afterToolsHandlers: [AfterToolsEventHandler]
+
+    @HookOrdered
     private(set) var afterModelCallHandlers: [AfterModelCallEventHandler]
 
     @HookOrdered
@@ -65,6 +68,7 @@ struct HookRegistry {
         beforeToolsHandlers: [BeforeToolsEventHandler] = [],
         beforeToolCallHandlers: [BeforeToolCallEventHandler] = [],
         afterToolCallHandlers: [AfterToolCallEventHandler] = [],
+        afterToolsHandlers: [AfterToolsEventHandler] = [],
         afterModelCallHandlers: [AfterModelCallEventHandler] = [],
         afterInvocationHandlers: [AfterInvocationEventHandler] = []
     ) {
@@ -74,6 +78,7 @@ struct HookRegistry {
         self.beforeToolCallHandlers = beforeToolCallHandlers
 
         self.afterToolCallHandlers = afterToolCallHandlers
+        self.afterToolsHandlers = afterToolsHandlers
         self.afterModelCallHandlers = afterModelCallHandlers
         self.afterInvocationHandlers = afterInvocationHandlers
     }
@@ -102,6 +107,10 @@ struct HookRegistry {
             self.afterToolCallHandlers.append(hook)
         }
 
+        if let hook = hook as? AfterToolsEventHandler {
+            self.afterToolsHandlers.append(hook)
+        }
+
         if let hook = hook as? AfterModelCallEventHandler {
             self.afterModelCallHandlers.append(hook)
         }
@@ -120,6 +129,7 @@ struct HookRegistry {
         self.beforeToolCallHandlers.remove(id)
 
         self.afterToolCallHandlers.remove(id)
+        self.afterToolsHandlers.remove(id)
         self.afterModelCallHandlers.remove(id)
         self.afterInvocationHandlers.remove(id)
     }
@@ -138,12 +148,12 @@ struct HookRegistry {
 
             case .afterToolCall:
                 self.afterToolCallHandlers.removeAll()
+            case .afterTools:
+                self.afterToolsHandlers.removeAll()
             case .afterModelCall:
                 self.afterModelCallHandlers.removeAll()
             case .afterInvocation:
                 self.afterInvocationHandlers.removeAll()
-            default:
-                break
             }
         }
     }

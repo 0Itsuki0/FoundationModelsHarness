@@ -69,10 +69,8 @@ public enum AgentStreamEvent: Sendable {
         self = .toolCall(toolCall)
     }
 
-    init(toolResult: Result<Transcript.ToolOutput, ToolCallError>) {
-        self = .toolResult(
-            toolResult.mapError(\.error)
-        )
+    init(toolResult: Result<Transcript.ToolOutput, Error>) {
+        self = .toolResult(toolResult)
     }
 
     init(error: Error, usage: LanguageModelSession.Usage) {

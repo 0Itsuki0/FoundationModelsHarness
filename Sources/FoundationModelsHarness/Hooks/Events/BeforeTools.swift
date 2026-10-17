@@ -60,7 +60,7 @@ public struct BeforeToolsEventHandler: HookEventHandler {
 
 extension BeforeToolsEventHandler {
     enum CallbackHandlingResult: Sendable {
-        case cancelled([Transcript.ToolOutput])
+        case cancelled([(Transcript.ToolCall, Transcript.ToolOutput)])
         case `continue`
     }
 }

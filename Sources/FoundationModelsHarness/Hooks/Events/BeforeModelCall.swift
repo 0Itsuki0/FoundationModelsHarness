@@ -37,7 +37,7 @@ public struct BeforeModelCallEventHandler: HookEventHandler {
         ///
         /// Read/write. Last-wins.
         ///
-        /// `stopReason` on the returned `AgentResult` is `'endTurn'`.
+        /// `stopReason` on the returned `AgentResult` is `endTurn`.
         public var cancel: JSONValue? = nil
     }
 

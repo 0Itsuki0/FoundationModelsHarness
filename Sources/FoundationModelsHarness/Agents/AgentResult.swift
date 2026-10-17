@@ -9,7 +9,7 @@ import FoundationModels
 
 public struct AgentResult: Sendable {
 
-    public private(set) var stopReason: AgentStopReason
+    public let stopReason: AgentStopReason
 
     public let invocationState: InvocationState
 
@@ -78,16 +78,16 @@ extension AgentStopReason: CustomStringConvertible {
         case .endTurn(let response):
             return response.description
         case .refusal(let error):
-            return error.localizedDescription
+            return "(Model refusal) \(error.localizedDescription)"
         case .toolCallError(let toolCallError):
-            return toolCallError.map(\.description).joined(separator: "\n")
+            return "(Tool call error) " + toolCallError.map(\.description).joined(separator: ".")
         }
     }
 }
 
 public struct ToolCallError: Error, Sendable {
-    var toolCall: Transcript.ToolCall
-    var error: Error
+    public let toolCall: Transcript.ToolCall
+    public let error: Error
 }
 
 extension ToolCallError: CustomStringConvertible {

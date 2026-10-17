@@ -68,18 +68,17 @@ let agent = Agent(
 )
 
 agent.addHook(
-    BeforeToolsEventHandler(callback: { event in
-        if event.toolCalls.count > 1 {
-            event.cancel = "one tool at a time."
-        }
+    AfterToolsEventHandler(callback: { event in
+        event.endTurn = "greeted!"
     })
 )
 
 //agent.agentState["app"] = "Test"
-let response = await agent.respond(
-    to: "hello. greet itsuki and dan",
-    invocationState: ["resume": true]
-)
+//let result = await agent.respond(
+//    to: "hello. greet itsuki and dan",
+//    invocationState: ["resume": true]
+//)
+//print("result", result)
 ////print("response: ", response.rawContent as Any)
 //print("-----")
 //await agent.respond(to: "how's going")
@@ -90,4 +89,5 @@ let response = await agent.respond(
 //    agent.streamResponse(to: "how's going?")
 //)
 //
-printHistory(agent.history)
+//printHistory(agent.history)
+await afterToolsHook(stream: true)

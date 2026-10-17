@@ -95,6 +95,11 @@ public struct ToolOutputWrapper: ConvertibleToGeneratedContent {
 
     init(_ content: JSONValue, status: Status) {
         self.content = content
+        self.status = status
+    }
+
+    init(_ error: Error) {
+        self.content = .string(error.localizedDescription)
         self.status = .error
     }
 

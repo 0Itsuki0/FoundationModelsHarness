@@ -364,29 +364,44 @@ public final class Agent: Sendable {
                     streamingInto: continuation
                 )
 
-                let error: [ToolCallError] = results.compactMap({
-                    switch $0 {
-                    case .success(_):
-                        return nil
-                    case .failure(let value):
-                        return value
-                    }
-                })
+                switch results {
+                case .continue(let toolCallResults):
+                    let error: [ToolCallError] =
+                        toolCallResults
+                        .compactMap { result -> ToolCallError? in
+                            switch result.result {
+                            case .success(_):
+                                return nil
+                            case .failure(let value):
+                                return ToolCallError(
+                                    toolCall: result.toolCall,
+                                    error: value
+                                )
+                            }
+                        }
 
-                if !error.isEmpty {
+                    if !error.isEmpty {
+                        return AgentResult(
+                            error: error,
+                            invocationState: invocationState,
+                            usage: usage
+                        )
+                    }
+
+                    modelStopData = await self.invokeModel(
+                        prompt: nil,
+                        currentAttempt: 1,
+                        session: session,
+                        streamingInto: continuation
+                    )
+
+                case .endTurn(let response):
                     return AgentResult(
-                        error: error,
+                        response: response,
                         invocationState: invocationState,
                         usage: usage
                     )
                 }
-
-                modelStopData = await self.invokeModel(
-                    prompt: nil,
-                    currentAttempt: 1,
-                    session: session,
-                    streamingInto: continuation
-                )
 
                 continue
             }
@@ -644,6 +659,13 @@ public enum ToolExecutionMode: Sendable, Equatable, Hashable {
     case parallel
 }
 
+public struct ToolCallResult: Sendable {
+    public let toolCall: Transcript.ToolCall
+
+    /// The error here, if present, will be penetrate to the `AgentResult` directly as `AgentStopReason.ToolCallError`
+    public let result: Result<Transcript.ToolOutput, Error>
+}
+
 extension Agent {
 
     private func callTools(
@@ -652,9 +674,9 @@ extension Agent {
         streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation?
     )
-        async -> [Result<Transcript.ToolOutput, ToolCallError>]
+        async -> AfterToolsEventHandler.CallbackHandlingResult
     {
-        let result: [Result<Transcript.ToolOutput, ToolCallError>]
+        let results: [ToolCallResult]
 
         /// no need to stream the toolCalls before the hook callback here
         /// because it is already streamed as a model stop
@@ -663,43 +685,54 @@ extension Agent {
         switch beforeToolResult {
 
         case .cancelled(let outputs):
-            result = outputs.map(Result.success)
+            results = outputs.map { call, output in
+                .init(toolCall: call, result: .success(output))
+            }
         case .continue:
             switch mode {
             case .sequential:
-                result = await callToolSequential(
+                results = await callToolSequential(
                     toolCalls,
                     streamingInto: continuation
                 )
             case .parallel:
-                result = await callToolsParallel(
+                results = await callToolsParallel(
                     toolCalls,
                     streamingInto: continuation
                 )
             }
         }
 
-        await self.afterTools()
+        return await self.afterTools(toolCallResults: results)
 
-        return result
+        //        switch afterToolResult {
+        //
+        //        case .endTurn(_):
+        //            <#code#>
+        //        case .continue:
+        //            <#code#>
+        //        }
+        //
+        //        return results.map { result in
+        //            result.result.mapError({
+        //                ToolCallError(toolCall: result.toolCall, error: $0)
+        //            })
+        //        }
     }
 
     private func callToolsParallel(
         _ toolCalls: Transcript.ToolCalls,
         streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation?
-    )
-        async -> [Result<Transcript.ToolOutput, ToolCallError>]
-    {
+    ) async -> [ToolCallResult] {
 
-        let results = await withTaskGroup(
-            of: (Result<Transcript.ToolOutput, ToolCallError>).self
-        ) { group in
-            var results: [Result<Transcript.ToolOutput, ToolCallError>] = []
+        let results = await withTaskGroup(of: ToolCallResult.self) { group in
+            var results: [ToolCallResult] = []
 
             for toolCall in toolCalls {
                 group.addTask { [callTool] in
-                    return await callTool(toolCall, continuation)
+                    let result = await callTool(toolCall, continuation)
+                    return ToolCallResult(toolCall: toolCall, result: result)
                 }
             }
 
@@ -711,7 +744,6 @@ extension Agent {
         }
 
         return results
-
     }
 
     private func callToolSequential(
@@ -719,15 +751,15 @@ extension Agent {
         streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation?
     )
-        async -> [Result<Transcript.ToolOutput, ToolCallError>]
+        async -> [ToolCallResult]
     {
-        var output: [Result<Transcript.ToolOutput, ToolCallError>] = []
+        var output: [ToolCallResult] = []
         for toolCall in toolCalls {
             let result = await callTool(
                 for: toolCall,
                 streamingInto: continuation
             )
-            output.append(result)
+            output.append(.init(toolCall: toolCall, result: result))
         }
         return output
     }
@@ -737,7 +769,7 @@ extension Agent {
         streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation?
     ) async
-        -> Result<Transcript.ToolOutput, ToolCallError>
+        -> Result<Transcript.ToolOutput, Error>
     {
         /// streaming event coming *before* hooks
         /// Pro: immediate feed back instead of waiting for all hooks to finish
@@ -746,7 +778,7 @@ extension Agent {
 
         await self.beforeToolCall()
 
-        let result: Result<Transcript.ToolOutput, ToolCallError>
+        let result: Result<Transcript.ToolOutput, Error>
 
         do {
 
@@ -779,7 +811,6 @@ extension Agent {
         await self.afterToolCall()
         return result
     }
-
 }
 
 extension LanguageModelSession.Usage {
@@ -811,10 +842,13 @@ extension Agent {
         if let cancel = event.cancel {
             let toolOutput = ToolOutputWrapper(cancel, status: .error)
             let outputTranscripts = toolCalls.map { toolCall in
-                Transcript.ToolOutput(
-                    id: toolCall.id,
-                    toolName: toolCall.toolName,
-                    segments: toolOutput.segments
+                return (
+                    toolCall,
+                    Transcript.ToolOutput(
+                        id: toolCall.id,
+                        toolName: toolCall.toolName,
+                        segments: toolOutput.segments
+                    )
                 )
             }
 
@@ -824,7 +858,9 @@ extension Agent {
             /// the when `onResponse` is triggered by the system,
             /// the `history` will contains the last `Transcript.Response`
             self.history.append(
-                contentsOf: outputTranscripts.map(Transcript.Entry.toolOutput)
+                contentsOf: outputTranscripts.map(\.1).map(
+                    Transcript.Entry.toolOutput
+                )
             )
 
             return .cancelled(outputTranscripts)
@@ -834,8 +870,55 @@ extension Agent {
 
     }
 
-    private func afterTools() async {
+    private func afterTools(toolCallResults: [ToolCallResult]) async
+        -> AfterToolsEventHandler.CallbackHandlingResult
+    {
         print(#function)
+
+        let handlers = hookRegistry.afterToolsHandlers
+        var event = AfterToolsEventHandler.EventPayload(
+            toolResults: toolCallResults,
+            agent: agentSnapshot
+        )
+
+        for handler in handlers {
+            await handler.callback(&event)
+        }
+
+        if let endTurn = event.endTurn {
+            /// wrap any `ToolCallResult.output.failure` with `ToolOutputWrapper` and add to history.
+            for (index, result) in toolCallResults.enumerated() {
+                switch result.result {
+                case .success(_):
+                    continue
+                case .failure(let error):
+                    let wrapper = ToolOutputWrapper(error)
+                    let toolCall = result.toolCall
+                    let outputTranscript = Transcript.ToolOutput(
+                        id: toolCall.id,
+                        toolName: toolCall.toolName,
+                        segments: wrapper.segments
+                    )
+                    /// add to history
+                    self.history.append(.toolOutput(outputTranscript))
+                }
+            }
+
+            /// programmatically append `endTurn` as model response to history
+            let response = Transcript.Response(
+                segments: SegmentBuilder.segments(
+                    from: endTurn,
+                    schemaName: "GeneratedContent"
+                )
+            )
+
+            self.history.append(.response(response))
+
+            return .endTurn(response)
+        }
+
+        return .continue(toolCallResults)
+
     }
 
     private func beforeInvocation(prompt: Transcript.Prompt) async

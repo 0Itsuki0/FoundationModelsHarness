@@ -55,7 +55,7 @@ public struct AfterToolCallEventHandler: HookEventHandler {
         ///
         /// `AfterInvocation` hook will be triggered with the model response created from the `endTurn` value.
         ///
-        /// `stopReason` on the returned `AgentResult` is `'endTurn'`.
+        /// `stopReason` on the returned `AgentResult` is `endTurn`.
         public var endTurn: JSONValue?
 
     }
