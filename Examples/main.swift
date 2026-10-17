@@ -68,19 +68,18 @@ let agent = Agent(
 )
 
 agent.addHook(
-    BeforeModelCallEventHandler(callback: { event in
-        if event.agent.history.last?.asPrompt == nil {
-            print("tool output")
-            event.cancel = "nope!"
+    AfterModelCallEventHandler(callback: { event in
+        if event.attemptCount == 1 {
+            event.retry = true
         }
     })
 )
 
 //agent.agentState["app"] = "Test"
-//let response = await agent.respond(
-//    to: "hello. greet itsuki",
-//    invocationState: ["resume": true]
-//)
+let response = await agent.respond(
+    to: "hello. greet itsuki",
+    invocationState: ["resume": true]
+)
 ////print("response: ", response.rawContent as Any)
 //print("-----")
 //await agent.respond(to: "how's going")

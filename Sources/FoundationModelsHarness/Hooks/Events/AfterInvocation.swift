@@ -21,7 +21,7 @@ public struct AfterInvocationEventHandler: HookEventHandler {
     public let id = HookID()
 
     public struct EventPayload: Sendable {
-        /// The The result of the agent invocation.
+        /// The result of the agent invocation.
         public let result: AgentResult
 
         /// Following parameters accessible through`agent`:

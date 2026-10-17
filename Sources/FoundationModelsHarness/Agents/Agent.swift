@@ -27,6 +27,9 @@ extension SessionPropertyValues {
 public typealias InvocationState = [String: JSONValue]
 public typealias AgentState = [String: JSONValue]
 
+// TODO: - add invocation options in and add a default invocation option on Agent `init`.
+public struct InvocationOptions: Sendable {}
+
 extension Agent {
     public subscript<T>(dynamicMember keyPath: KeyPath<LanguageModelSession, T>)
         -> T
@@ -156,6 +159,7 @@ public final class Agent: Sendable {
     ///   - responseFormat: A response format that describes the output structure.
     ///   - contextOptions: Settings that configure how the model is prompted.
     ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
+    ///   - toolExecutionMode: Strategy for executing tool calls that the model emits in a single assistant turn.
     @discardableResult
     public func respond(
         to prompt: String,
@@ -328,6 +332,7 @@ public final class Agent: Sendable {
 
         var modelStopData = await invokeModel(
             prompt: prompt,
+            currentAttempt: 1,
             session: session,
             streamingInto: continuation
         )
@@ -358,24 +363,15 @@ public final class Agent: Sendable {
                     mode: toolExecutionMode,
                     streamingInto: continuation
                 )
-                let mapped: [(Transcript.ToolOutput?, ToolCallError?)] =
-                    results.compactMap({
-                        switch $0 {
-                        case .success(let value):
-                            return (value, nil)
-                        case .failure(let value):
-                            return (nil, value)
-                        }
-                    })
 
-                let success: [Transcript.ToolOutput] = mapped.compactMap({
-                    $0.0
+                let error: [ToolCallError] = results.compactMap({
+                    switch $0 {
+                    case .success(_):
+                        return nil
+                    case .failure(let value):
+                        return value
+                    }
                 })
-                let error: [ToolCallError] = mapped.compactMap({ $0.1 })
-
-                self.history.append(
-                    contentsOf: success.map(Transcript.Entry.toolOutput)
-                )
 
                 if !error.isEmpty {
                     return AgentResult(
@@ -387,6 +383,7 @@ public final class Agent: Sendable {
 
                 modelStopData = await self.invokeModel(
                     prompt: nil,
+                    currentAttempt: 1,
                     session: session,
                     streamingInto: continuation
                 )
@@ -403,6 +400,7 @@ public final class Agent: Sendable {
     /// Important: **Never** call `continuation.finish` here
     private func invokeModel(
         prompt: Transcript.Prompt?,
+        currentAttempt: Int,
         session: LanguageModelSession,
         streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation?
@@ -478,13 +476,13 @@ public final class Agent: Sendable {
                     after: session.usage
                 )
 
-//                if let error = error.responseFinishError {
-//                    modelStopData = ModelStopData(
-//                        response: error.response,
-//                        invocationState: invocationState,
-//                        usage: usage
-//                    )
-//                } else
+                //                if let error = error.responseFinishError {
+                //                    modelStopData = ModelStopData(
+                //                        response: error.response,
+                //                        invocationState: invocationState,
+                //                        usage: usage
+                //                    )
+                //                } else
                 if let error = error.toolCallsReceived {
                     modelStopData = ModelStopData(
                         toolCalls: error.toolCalls,
@@ -501,10 +499,37 @@ public final class Agent: Sendable {
                 }
             }
         }
-        
+
         continuation?.yield(.modelStop(modelStopData))
-        
-        await self.afterModelCall()
+
+        let afterModelCallResult = await self.afterModelCall(
+            stopData: modelStopData,
+            currentAttempt: currentAttempt
+        )
+
+        switch afterModelCallResult {
+        case .retry:
+            if let prompt {
+                /// technically speaking, the else branch should return the same thing. But with the id, it is more guaranteed in case the history is modified somewhere else.
+                self.history = self.history.prefix(while: {
+                    $0.id != prompt.id
+                })
+            } else {
+                if let lastIndex = self.history.lastIndex(where: {
+                    $0.asPrompt != nil
+                }) {
+                    self.history = self.history.prefix(upTo: lastIndex)
+                }
+            }
+            return await invokeModel(
+                prompt: prompt,
+                currentAttempt: currentAttempt + 1,
+                session: session,
+                streamingInto: continuation
+            )
+        case .continue:
+            break
+        }
 
         return modelStopData
     }
@@ -540,12 +565,10 @@ public final class Agent: Sendable {
         return options
     }
 
-
     private var dummyPromptMetadata: [String: any ConvertibleToGeneratedContent]
     {
         [InternalMetadataKey.dummyPrompt: true]
     }
-
 
     public func streamResponse(
         to prompt: String,
@@ -613,6 +636,9 @@ public final class Agent: Sendable {
     }
 }
 
+/// Strategy for executing tool calls that the model emits in a single assistant turn.
+/// - `parallel`: runs all tool calls from a single turn in parallel.
+/// - `sequential`: runs tool calls one at a time
 public enum ToolExecutionMode: Sendable, Equatable, Hashable {
     case sequential
     case parallel
@@ -729,6 +755,9 @@ extension Agent {
                     schemaName: tool.parameters.name
                 )
             )
+
+            self.history.append(.toolOutput(outputTranscript))
+
             result = .success(outputTranscript)
         } catch {
             result = .failure(ToolCallError(toolCall: toolCall, error: error))
@@ -838,8 +867,28 @@ extension Agent {
         return .continue
     }
 
-    private func afterModelCall() async {
+    private func afterModelCall(stopData: ModelStopData, currentAttempt: Int)
+        async -> AfterModelCallEventHandler.CallbackHandlingResult
+    {
         print(#function)
+        let handlers = hookRegistry.afterModelCallHandlers
+        var event = AfterModelCallEventHandler.EventPayload(
+            stopData: stopData,
+            agent: agentSnapshot,
+            attemptCount: currentAttempt
+        )
+
+        for handler in handlers {
+            await handler.callback(&event)
+        }
+
+        /// Invocation retry requested. last-wins. Take priority over `resume`
+        if event.retry {
+            return .retry
+        }
+
+        return .continue
+
     }
 
     private func afterInvocation(
@@ -872,35 +921,6 @@ extension Agent {
         }
 
         return .finish
-    }
-
-    private func retryInvocation(
-        on prompt: Prompt,
-        previousPromptId: Transcript.Prompt.ID,
-        schema: GenerationSchema? = nil,
-        options: GenerationOptions = GenerationOptions(),
-        metadata: [String: any ConvertibleToGeneratedContent] = [:],
-        contextOptions: ContextOptions = ContextOptions(),
-        invocationState: InvocationState = [:],
-        toolExecutionMode: ToolExecutionMode,
-        currentAttempt: Int,
-        session: LanguageModelSession,
-        streamingInto continuation: AsyncStream<AgentStreamEvent>
-            .Continuation?
-    ) async -> AgentResult {
-        self.history = self.history.prefix(while: { $0.id != previousPromptId })
-        return await runInvocation(
-            on: prompt,
-            schema: schema,
-            options: options,
-            metadata: metadata,
-            contextOptions: contextOptions,
-            invocationState: invocationState,
-            toolExecutionMode: toolExecutionMode,
-            currentAttempt: currentAttempt + 1,
-            session: session,
-            streamingInto: nil
-        )
     }
 
     private func beforeToolCall() async {
@@ -1344,9 +1364,9 @@ extension Error {
         return self.error(ToolCallsReceived.self)
     }
 
-//    var responseFinishError: ResponseFinishedError? {
-//        return self.error(ResponseFinishedError.self)
-//    }
+    //    var responseFinishError: ResponseFinishedError? {
+    //        return self.error(ResponseFinishedError.self)
+    //    }
 
     func isError<T: Error>(_ type: T.Type) -> Bool {
         return self.error(type) != nil
