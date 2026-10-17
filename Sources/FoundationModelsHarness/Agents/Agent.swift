@@ -703,21 +703,16 @@ extension Agent {
             }
         }
 
-        return await self.afterTools(toolCallResults: results)
+        /// update the last `Transcript.ToolCalls` in the history to handle any tool call update within the hook callback
+        if let index = self.history.lastIndex(where: {
+            $0.id == toolCalls.id
+        }) {
+            self.history[index] = .toolCalls(
+                Transcript.ToolCalls(id: toolCalls.id, results.map(\.toolCall))
+            )
+        }
 
-        //        switch afterToolResult {
-        //
-        //        case .endTurn(_):
-        //            <#code#>
-        //        case .continue:
-        //            <#code#>
-        //        }
-        //
-        //        return results.map { result in
-        //            result.result.mapError({
-        //                ToolCallError(toolCall: result.toolCall, error: $0)
-        //            })
-        //        }
+        return await self.afterTools(toolCallResults: results)
     }
 
     private func callToolsParallel(
@@ -731,8 +726,11 @@ extension Agent {
 
             for toolCall in toolCalls {
                 group.addTask { [callTool] in
-                    let result = await callTool(toolCall, continuation)
-                    return ToolCallResult(toolCall: toolCall, result: result)
+                    return await callTool(
+                        toolCall,
+                        toolCalls,
+                        continuation
+                    )
                 }
             }
 
@@ -757,57 +755,83 @@ extension Agent {
         for toolCall in toolCalls {
             let result = await callTool(
                 for: toolCall,
+                currentCalls: toolCalls,
                 streamingInto: continuation
             )
-            output.append(.init(toolCall: toolCall, result: result))
+            output.append(result)
         }
         return output
     }
 
     private func callTool(
         for toolCall: Transcript.ToolCall,
+        currentCalls: Transcript.ToolCalls,
         streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation?
     ) async
-        -> Result<Transcript.ToolOutput, Error>
+        -> ToolCallResult
     {
         /// streaming event coming *before* hooks
         /// Pro: immediate feed back instead of waiting for all hooks to finish
         /// Con: in case the input is transformed in the hook, what user sees could be different to what is actually added to the session
         continuation?.yield(.init(toolCall: toolCall))
 
-        await self.beforeToolCall()
+        let beforeCallResult = await self.beforeToolCall(
+            toolCall,
+            allCalls: currentCalls
+        )
 
-        let result: Result<Transcript.ToolOutput, Error>
+        let result: ToolCallResult
 
-        do {
+        switch beforeCallResult {
+        case .cancelled(let toolOutput):
+            result = .init(toolCall: toolCall, result: .success(toolOutput))
+        case .continue(let toolCall):
+            do {
+                let toolOutput: any PromptRepresentable
+                let schemaName: String
+                if let tool = getTool(with: toolCall.toolName) {
+                    toolOutput = try await tool.call(
+                        arguments: toolCall.arguments
+                    ).output
+                    schemaName = tool.parameters.name
+                } else {
+                    let toolNotFound = ToolOutputWrapper(
+                        missingTool: toolCall.toolName
+                    )
+                    toolOutput = toolNotFound.promptRepresentation
+                    schemaName = "GeneratedContent"
+                }
 
-            let tool = try getTool(for: toolCall)
-
-            let toolOutput = try await tool.call(
-                arguments: toolCall.arguments
-            )
-
-            let outputTranscript = await Transcript.ToolOutput(
-                id: toolCall.id,
-                toolName: toolCall.toolName,
-                segments: self.toolOutputSegments(
-                    from: toolOutput,
-                    schemaName: tool.parameters.name
+                let outputTranscript = await Transcript.ToolOutput(
+                    id: toolCall.id,
+                    toolName: toolCall.toolName,
+                    segments: self.toolOutputSegments(
+                        from: toolOutput,
+                        schemaName: schemaName
+                    )
                 )
-            )
 
-            self.history.append(.toolOutput(outputTranscript))
+                self.history.append(.toolOutput(outputTranscript))
 
-            result = .success(outputTranscript)
-        } catch {
-            result = .failure(ToolCallError(toolCall: toolCall, error: error))
+                result = .init(
+                    toolCall: toolCall,
+                    result: .success(outputTranscript)
+                )
+            } catch {
+                result = .init(
+                    toolCall: toolCall,
+                    result: .failure(
+                        ToolCallError(toolCall: toolCall, error: error)
+                    )
+                )
+            }
         }
 
         /// streaming event coming *before* hooks
         /// Pro: immediate feed back instead of waiting for all hooks to finish
         /// Con: in case the output is transformed in the hook, what user sees could be different to what is actually added to the session
-        continuation?.yield(.init(toolResult: result))
+        continuation?.yield(.init(toolResult: result.result))
         await self.afterToolCall()
         return result
     }
@@ -822,6 +846,48 @@ extension LanguageModelSession.Usage {
 
 // MARK: - Hook
 extension Agent {
+    private func beforeToolCall(
+        _ toolCall: Transcript.ToolCall,
+        allCalls: Transcript.ToolCalls
+    ) async -> BeforeToolCallEventHandler.CallbackHandlingResult {
+        print(#function)
+        let handlers = hookRegistry.beforeToolCallHandlers
+        var event = BeforeToolCallEventHandler.EventPayload(
+            toolCall: toolCall,
+            toolCalls: Array(allCalls),
+            agent: agentSnapshot
+        )
+
+        for handler in handlers {
+            await handler.callback(&event)
+        }
+
+        /// Tool call cancelled with a cancelled content. last-wins.
+        if let cancel = event.cancel {
+            let toolOutput = ToolOutputWrapper(cancel, status: .error)
+            let outputTranscript = Transcript.ToolOutput(
+                id: toolCall.id,
+                toolName: toolCall.toolName,
+                segments: toolOutput.segments
+            )
+
+            /// Add the response entry to the history.
+            ///
+            /// Doing this before calling the `handleOnResponse` because
+            /// the when `onResponse` is triggered by the system,
+            /// the `history` will contains the last `Transcript.Response`
+            self.history.append(.toolOutput(outputTranscript))
+
+            return .cancelled(outputTranscript)
+        }
+
+        return .continue(event.toolCall)
+    }
+
+    private func afterToolCall() async {
+        print(#function)
+    }
+
     private func beforeTools(toolCalls: Transcript.ToolCalls) async
         -> BeforeToolsEventHandler.CallbackHandlingResult
     {
@@ -838,7 +904,7 @@ extension Agent {
         }
 
         /// All Tool calls cancelled with a cancelled content. last-wins.
-        /// Prompt is already in the history so there is no need to add it.
+        /// `Transcript.ToolCalls` is already in the history so there is no need to add it.
         if let cancel = event.cancel {
             let toolOutput = ToolOutputWrapper(cancel, status: .error)
             let outputTranscripts = toolCalls.map { toolCall in
@@ -1054,85 +1120,11 @@ extension Agent {
         return .finish
     }
 
-    private func beforeToolCall() async {
-        print(#function)
-    }
-
-    private func afterToolCall() async {
-        print(#function)
-    }
-
     private func handleOnResponse(_ response: Transcript.Response) async throws
     {
         /// `history` will contains the last `Transcript.Response`
 
     }
-
-    //    private func handleOnPrompt(_ prompt: Transcript.Prompt) async throws {
-    //        /// remove the dummy empty prompt added when calling `responseStream`/`respond` used to force the retry from the updated history
-    //        /// This will work as long as the transcript ends with prompt / tool output entry,
-    //        /// which is indeed the case here.
-    //        history.removeDummyPrompt()
-    //
-    //        /// Internal Retry. Return early. No Hook triggered.
-    //        if isInternalRetry {
-    //            return
-    //        }
-    //
-    //        /// history will contain the prompt as its last entry
-    //        ///
-    //        /// NOTE: **Not** modifying history directly at the start
-    //        /// so that in the case where handler throws
-    //        /// we still have a clean history (managed by the FoundationModels SDK. Untouched)
-    //        var historyBeforePrompt: Transcript.HistoryView = history
-    //        historyBeforePrompt.removeAll {
-    //            $0.asPrompt != nil && $0.id == prompt.id
-    //        }
-    //
-    //        let handlers = hookRegistry.beforeInvocationHandlers
-    //        var event = BeforeInvocationEventHandler.EventPayload(
-    //            prompt: prompt,
-    //            agent: createLocalAgent(with: historyBeforePrompt)
-    //        )
-    //
-    //        for handler in handlers {
-    //            try await handler.callback(&event)
-    //        }
-    //
-    //        /// Model call cancelled with a cancelled content. last-wins.
-    //        if let cancel = event.cancel {
-    //            let response = Transcript.Response(
-    //                segments: SegmentBuilder.segments(
-    //                    from: cancel,
-    //                    schemaName: "GeneratedContent"
-    //                )
-    //            )
-    //
-    //            /// Add the response entry to the history.
-    //            ///
-    //            /// Doing this before calling the `handleOnResponse` because
-    //            /// the when `onResponse` is triggered by the system,
-    //            /// the `history` will contains the last `Transcript.Response`
-    //            self.history.append(.response(response))
-    //
-    //            /// programmatically triggers the `onResponse` Event
-    //            try await self.handleOnResponse(response)
-    //
-    //            throw ResponseFinishedError(response)
-    //        }
-    //
-    //        /// No changes to the tool Call. Return early.
-    //        guard prompt != event.prompt else {
-    //            return
-    //        }
-    //
-    //        /// Prompt modified. Last-wins
-    //        ///
-    //        /// NOTE: modifying the history here directly will indeed effect what the model sees (respond to),
-    //        /// which is different from modifying the tool call in onToolCall where the model will NOT see the updated tool call parameters.
-    //        self.history = historyBeforePrompt + [.prompt(event.prompt)]
-    //
-    //    }
 
     private func handleOnToolOutput(
         toolCall: Transcript.ToolCall,
@@ -1308,53 +1300,53 @@ extension Agent {
         async throws
     {
         /// since the `invocableTool` is a wrapper around the `tool` passing in, both share the same arguments, output, schema, name
-        let tool = try getTool(for: toolCall)
-
-        var calls = toolCalls.expand()
-
-        /// update the target tool call
-        if let index = calls.firstIndex(where: { $0.id == previousId }) {
-            calls[index] = toolCall
-        } else {
-            calls.append(toolCall)
-        }
-        /// Add back the Transcript.ToolCalls and assign it to the history.
+        //        let tool = try getTool(for: toolCall)
         //
-        /// modifying the history here will effect what the model sees **On the next turn**.
-        /// It will **NOT** effect the actual argument used to call the tool nor which tool is called.
+        //        var calls = toolCalls.expand()
         //
-        /// NOTE: that we need to set `self.history` twice: once here, once after the `handleOnToolOutput`,
-        /// because if one of the AfterToolCallEventHandler throws an error,
-        /// we still want to record the updated tool call.
-        self.history =
-            historyBeforeLastToolCall + [
-                .toolCalls(.init(id: toolCalls.id, calls))
-            ]
-
-        /// **Programmatically** call the wrapper tool if there is a change.
-        ///
-        /// This is needed because even if we have modified the session history with the new toolCall Parameter,
-        /// (aka: history = historyTemp)
-        /// the model will still use the previous tool name / arguments.
-        let outputTranscript = try
-            (await callTool(for: toolCall, streamingInto: nil)).get()
-
-        /// programmatically triggers the `onToolOutput` Event
-        try await self.handleOnToolOutput(
-            toolCall: toolCall,
-            toolOutput: outputTranscript
-        )
-
-        /// Add in the tool output to the session's history
-        ///
-        /// NOTE: do this *after* the `handleOnToolOutput` because for the `onToolOutput` triggered by the system,
-        /// the `history` will contains the last Transcript.ToolCalls entry but **NOT** the `Transcript.ToolOutput`
-        self.history.append(
-            .toolOutput(outputTranscript)
-        )
-
-        /// throw retry error to force the model to generate a response based on the tool output.
-        throw RetryModelGenerationError.afterToolOutput
+        //        /// update the target tool call
+        //        if let index = calls.firstIndex(where: { $0.id == previousId }) {
+        //            calls[index] = toolCall
+        //        } else {
+        //            calls.append(toolCall)
+        //        }
+        //        /// Add back the Transcript.ToolCalls and assign it to the history.
+        //        //
+        //        /// modifying the history here will effect what the model sees **On the next turn**.
+        //        /// It will **NOT** effect the actual argument used to call the tool nor which tool is called.
+        //        //
+        //        /// NOTE: that we need to set `self.history` twice: once here, once after the `handleOnToolOutput`,
+        //        /// because if one of the AfterToolCallEventHandler throws an error,
+        //        /// we still want to record the updated tool call.
+        //        self.history =
+        //            historyBeforeLastToolCall + [
+        //                .toolCalls(.init(id: toolCalls.id, calls))
+        //            ]
+        //
+        //        /// **Programmatically** call the wrapper tool if there is a change.
+        //        ///
+        //        /// This is needed because even if we have modified the session history with the new toolCall Parameter,
+        //        /// (aka: history = historyTemp)
+        //        /// the model will still use the previous tool name / arguments.
+        //        let outputTranscript = try
+        //            (await callTool(for: toolCall, streamingInto: nil)).get()
+        //
+        //        /// programmatically triggers the `onToolOutput` Event
+        //        try await self.handleOnToolOutput(
+        //            toolCall: toolCall,
+        //            toolOutput: outputTranscript
+        //        )
+        //
+        //        /// Add in the tool output to the session's history
+        //        ///
+        //        /// NOTE: do this *after* the `handleOnToolOutput` because for the `onToolOutput` triggered by the system,
+        //        /// the `history` will contains the last Transcript.ToolCalls entry but **NOT** the `Transcript.ToolOutput`
+        //        self.history.append(
+        //            .toolOutput(outputTranscript)
+        //        )
+        //
+        //        /// throw retry error to force the model to generate a response based on the tool output.
+        //        throw RetryModelGenerationError.afterToolOutput
     }
 
     private func getTool(for toolCall: Transcript.ToolCall) throws
@@ -1369,11 +1361,19 @@ extension Agent {
                 .init(
                     explanation: "Tool \(toolCall.toolName) is not registered.",
                     debugDescription:
-                        "Register \(toolCall.toolName) and try again."
+                        "Tool [\(toolCall.toolName)] is not registered. Register the tool and try again."
                 )
             )
         }
         return tool
+    }
+
+    private func getTool(with name: String)
+        -> InvocableTool?
+    {
+        return self.tools.first(where: {
+            $0.invocableTool.name == name
+        })?.invocableTool
     }
 
     /// **Programmatically** call the wrapper tool
@@ -1415,11 +1415,10 @@ extension Agent {
         )
     }
 
-    func toolOutputSegments(
-        from output: InvocableTool.Output,
+    func toolOutputSegments<Output: PromptRepresentable>(
+        from output: Output,
         schemaName: String
     ) async -> [Transcript.Segment] {
-        let output = output.output
         let segments = await SegmentBuilder.segments(
             from: output.promptRepresentation
         )

@@ -39,6 +39,8 @@ public struct BeforeInvocationEventHandler: HookEventHandler {
         /// Read/write. Last-wins.
         ///
         /// `stopReason` on the returned `AgentResult` is `endTurn`.
+        ///
+        /// Setting `cancel` does NOT prevent the remaining handlers from being called.
         public var cancel: JSONValue? = nil
     }
 

@@ -21,12 +21,12 @@ enum BeforeToolCallExample {
 
 private let prompt = "greet itsuki"
 
-private func testStream(_ agent: Agent) async throws {
+private func testStream(_ agent: Agent) async {
     await printStream(agent.streamResponse(to: prompt))
     printHistory(agent.history)
 }
 
-private func testRespond(_ agent: Agent) async throws {
+private func testRespond(_ agent: Agent) async {
     let _ = await agent.respond(to: prompt)
     printHistory(agent.history)
 }
@@ -82,7 +82,7 @@ private func setUpStateAccessing(_ agent: Agent) {
 }
 
 func beforeToolCallHook(stream: Bool = false, example: BeforeToolCallExample)
-    async throws
+    async
 {
     let agent = Agent(
         tools: [.init(tool: GreetingTool(), delegate: false)],
@@ -99,5 +99,5 @@ func beforeToolCallHook(stream: Bool = false, example: BeforeToolCallExample)
         setupToolCallMutation(agent)
     }
 
-    stream ? try await testStream(agent) : try await testRespond(agent)
+    stream ? await testStream(agent) : await testRespond(agent)
 }

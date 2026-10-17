@@ -12,9 +12,7 @@ import FoundationModels
 ///
 /// Hook callbacks can:
 /// - Set `cancel` to prevent the tool from executing.
-/// - Mutate `toolCall` in place, or replace it wholesale, to rewrite the tool
-///   input or name before execution.
-///   The `name` has to be one of the registered tools. If it  is changed, a different tool will be called.
+/// - Mutate `toolCall` in place, or replace it wholesale, to rewrite the tool input or name before execution. The `name` has to be one of the registered tools. If it  is changed, a different tool will be called.
 public struct BeforeToolCallEventHandler: HookEventHandler {
     static public let eventType: HookEventType = .beforeToolCall
 
@@ -25,39 +23,27 @@ public struct BeforeToolCallEventHandler: HookEventHandler {
         ///
         /// Read/write. Last-wins (If a later `BeforeToolCallEventHandler` modifies the `toolCall` , that one will be the one executed.).
         ///
-        /// - Mutate `toolCall` in place, or replace it wholesale, to rewrite the tool
-        ///   input or name before execution.
-        ///   The `name` has to be one of the registered tools. If it  is changed, a different tool will be called.'
+        /// Mutate `toolCall` in place, or replace it wholesale, to rewrite the tool input or name before execution. The `name` has to be one of the registered tools. If it  is changed, a different tool will be called. If a tool with the given name cannot be found, a `Transcript.ToolOutput` indicating that the tool is missing will be create and added to the history for the model to generate a final response
         public var toolCall: Transcript.ToolCall
 
-        /// All tools being called in the current turn including the one triggers the event
-        ///
-        /// Read only.
+        /// All tools being called in the current turn including the one triggers the event.
+        /// This is the same as the last entry of `agent.history`.
         public let toolCalls: [Transcript.ToolCall]
 
         /// Following parameters accessible through`agent`:
         ///
         /// - `agentState`: Agent state persists across requests. Read/write.
         /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
-        /// - `history`: The transcript entries excluding the leading instructions entry, if present, up to **(not including)** the last tool calls
+        /// - `history`: The transcript entries excluding the leading instructions entry, if present, including the last tool calls
         public let agent: AgentSnapshot
 
         /// Set to a non-nil value to cancel this tool call with the value being the result error message. (`JSONValue.null` will cancel the tool call.)
         ///
         /// Read/write. Last-wins.
         ///
-        /// A `Transcript.ToolOutput` will be created from the value here and send back to the model for a final response.
-        /// The `ToolOutput` segments will be one single `Transcript.StructuredSegment` created with the JSON representation of `ToolOutputWrapper`
-        /// where the `content` is the value set on the `cancel`,  and the `status` being `Status.error`.
-        ///
         /// `AfterToolCall` hook will be triggered with the `Transcript.ToolOutput` created.
         ///
-        /// **NOTE**:
-        /// Setting `cancel` do NOT prevent the remaining `BeforeToolCallEventHandler` from being called.
-        /// - Later callbacks see the cancel. They get the same event object, so they can read event.cancel and skip their own work with
-        /// something like if (event.cancel) return.
-        /// - Later callbacks can undo the cancel
-        /// - Later callback can change the cancel value (message used as the tool output)
+        /// Setting `cancel` does NOT prevent the remaining handlers from being called.
         public var cancel: JSONValue? = nil
     }
 
@@ -73,40 +59,9 @@ public struct BeforeToolCallEventHandler: HookEventHandler {
     }
 }
 
-/// A generic Tool output for a cancelled tool call
-public struct ToolOutputWrapper: ConvertibleToGeneratedContent {
-    static let schemaName = "ToolOutput"
-
-    public var generatedContent: GeneratedContent {
-        GeneratedContent(properties: [
-            "status": status,
-            "content": content.generatedContent,
-        ])
-    }
-
-    @Generable
-    public enum Status {
-        case success
-        case error
-    }
-
-    public let status: Status
-    public let content: JSONValue
-
-    init(_ content: JSONValue, status: Status) {
-        self.content = content
-        self.status = status
-    }
-
-    init(_ error: Error) {
-        self.content = .string(error.localizedDescription)
-        self.status = .error
-    }
-
-    var segments: [Transcript.Segment] {
-        return SegmentBuilder.segments(
-            from: self.generatedContent,
-            schemaName: Self.schemaName
-        )
+extension BeforeToolCallEventHandler {
+    enum CallbackHandlingResult: Sendable {
+        case cancelled(Transcript.ToolOutput)
+        case `continue`(Transcript.ToolCall)
     }
 }

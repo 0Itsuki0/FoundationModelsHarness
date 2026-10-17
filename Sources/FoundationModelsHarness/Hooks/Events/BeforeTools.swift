@@ -34,14 +34,9 @@ public struct BeforeToolsEventHandler: HookEventHandler {
         ///
         /// Read/write. Last-wins.
         ///
-        /// A `Transcript.ToolOutput` will be created for each `Transcript.ToolCall` from the value here and send back to the model for a final response.
-        /// The `ToolOutput` segments will be one single `Transcript.StructuredSegment` created with the JSON representation of `ToolOutputWrapper`
-        /// where the `content` is the value set on the `cancel`,  and the `status` being `Status.error`.
-        ///
         /// `AfterTools` hook will be triggered, but **not** the `AfterToolCall` for individual `ToolOutput`.
         ///
-        /// **NOTE**:
-        /// Setting `cancel` do NOT prevent the remaining handlers from being called.
+        /// Setting `cancel` does NOT prevent the remaining handlers from being called.
         public var cancel: JSONValue? = nil
     }
 
