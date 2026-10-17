@@ -20,14 +20,16 @@ enum BeforeInvocationExample {
     case promptMutation
 }
 
+private let prompt = "Hello"
+
 private func testStream(_ agent: Agent) async throws {
-    await printStream(agent.streamResponse(to: "Hello"))
+    await printStream(agent.streamResponse(to: prompt))
     printHistory(agent.history)
 }
 
 private func testRespond(_ agent: Agent) async throws {
     let _ = await agent.respond(
-        to: "Hello",
+        to: prompt,
         invocationState: ["start_at": .string(Date().ISO8601Format())]
     )
     printHistory(agent.history)

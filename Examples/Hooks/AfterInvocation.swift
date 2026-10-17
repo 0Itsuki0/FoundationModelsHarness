@@ -18,18 +18,18 @@ enum AfterInvocationExample {
     case resume
 }
 
+private let prompt = "Hello"
+private let invocationState: InvocationState = ["resume": true]
+
 private func testStream(_ agent: Agent) async throws {
     await printStream(
-        agent.streamResponse(to: "Hello", invocationState: ["resume": true])
+        agent.streamResponse(to: prompt, invocationState: invocationState)
     )
     printHistory(agent.history)
 }
 
 private func testRespond(_ agent: Agent) async throws {
-    let _ = await agent.respond(
-        to: "Hello",
-        invocationState: ["resume": true]
-    )
+    let _ = await agent.respond(to: prompt, invocationState: invocationState)
     printHistory(agent.history)
 }
 

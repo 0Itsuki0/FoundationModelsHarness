@@ -12,6 +12,7 @@ import FoundationModels
 ///
 /// Hook callbacks can:
 /// - Set `cancel` to cancel this invocation.
+/// - Mutate `prompt` in place to modify what is sent to the model. You can use it, for example, for Context Injection.
 public struct BeforeInvocationEventHandler: HookEventHandler {
     static public let eventType: HookEventType = .beforeInvocation
 
@@ -36,15 +37,6 @@ public struct BeforeInvocationEventHandler: HookEventHandler {
         /// The value set here will be used as the model  response.
         ///
         /// Read/write. Last-wins.
-        ///
-        /// `AfterInvocation` hook will be triggered with the model response created from the `cancel` value.
-        ///
-        /// **NOTE**:
-        /// Setting `cancel` do NOT prevent the remaining `BeforeInvocationEventHandler` from being called.
-        /// - Later callbacks see the cancel. They get the same event object, so they can read event.cancel and skip their own work with
-        /// something like if (event.cancel) return.
-        /// - Later callbacks can undo the cancel
-        /// - Later callback can change the cancel value (message used as the model response)
         ///
         /// `stopReason` on the returned `AgentResult` is `'endTurn'`.
         public var cancel: JSONValue? = nil

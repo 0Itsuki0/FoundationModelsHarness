@@ -65,6 +65,12 @@ public struct ModelStopData: Sendable {
 
 }
 
+extension ModelStopData: CustomStringConvertible {
+    public var description: String {
+        return stopReason.description
+    }
+}
+
 public enum ModelStopReason: Sendable {
     case endTurn(Transcript.Response)
 
@@ -76,4 +82,17 @@ public enum ModelStopReason: Sendable {
     //    init(error: Error) {
     //        if let
     //    }
+}
+
+extension ModelStopReason: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .endTurn(let response):
+            return response.description
+        case .refusal(let error):
+            return error.localizedDescription
+        case .toolUse(let toolCall):
+            return toolCall.description
+        }
+    }
 }

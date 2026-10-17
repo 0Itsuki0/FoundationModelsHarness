@@ -66,7 +66,32 @@ public enum AgentStopReason: Sendable {
     case toolCallError([ToolCallError])
 }
 
+extension AgentResult: CustomStringConvertible {
+    public var description: String {
+        self.stopReason.description
+    }
+}
+
+extension AgentStopReason: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .endTurn(let response):
+            return response.description
+        case .refusal(let error):
+            return error.localizedDescription
+        case .toolCallError(let toolCallError):
+            return toolCallError.map(\.description).joined(separator: "\n")
+        }
+    }
+}
+
 public struct ToolCallError: Error, Sendable {
     var toolCall: Transcript.ToolCall
     var error: Error
+}
+
+extension ToolCallError: CustomStringConvertible {
+    public var description: String {
+        return "(\(toolCall.toolName)) \(error.localizedDescription)"
+    }
 }

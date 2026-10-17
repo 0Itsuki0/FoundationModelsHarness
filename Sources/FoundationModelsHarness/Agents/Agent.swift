@@ -245,7 +245,8 @@ public final class Agent: Sendable {
 
         switch beforeInvocationResult {
         case .cancelled(let response):
-            /// prompt and response already added to the history. simply returning the result here.
+            /// prompt and response already added to the history. simply set the result here.
+            /// No need to call `afterModelCall` here for clean-up because `beforeModelCall` is never called.
             agentResult = AgentResult(
                 response: response,
                 invocationState: invocationState,
@@ -395,7 +396,8 @@ public final class Agent: Sendable {
         }
     }
 
-    /// `prompt`: `nil` for not adding new prompt to the existing `history`
+    /// `prompt`: `nil` for not adding new prompt to the existing `history`,
+    /// aka: when trying to generate a response based on tool output
     ///
     /// `continuation`: passed in if streaming.
     /// Important: **Never** call `continuation.finish` here
@@ -408,12 +410,6 @@ public final class Agent: Sendable {
 
         let beforeCallUsage = session.usage
 
-        do {
-            try await self.beforeModelCall()
-        } catch {
-
-        }
-
         if let prompt {
             /// Always add the prompt transcript programmatically and then send a dummy prompt to trigger model
             /// to handle invocation handlers / model handlers prompt modification
@@ -422,91 +418,93 @@ public final class Agent: Sendable {
 
         let modelStopData: ModelStopData
 
-        do {
-            if let continuation {
-                for try await snapshot in session.streamResponse(
-                    to: "",
-                    metadata: dummyPromptMetadata
-                ) {
-                    /// Always calculate the usage instead of using response.usage
-                    /// because `snapshot.usage` sometimes does not reflect the full usage of this invoke
-                    continuation.yield(
-                        .init(
-                            rawContent: snapshot.rawContent,
-                            usage: calculateUsageDiff(
-                                before: beforeCallUsage,
-                                after: session.usage
+        /// `history` in `BeforeModelCall` hook should contain the last prompt if there is any.
+        /// Calling it after appending the prompt.
+        let beforeModelCallResult = await self.beforeModelCall()
+
+        switch beforeModelCallResult {
+        case .cancelled(let response):
+            /// prompt and response already added to the history. simply set the result here
+            /// **Not** returning early because `afterModelCall` will need to be called since `beforeModelCall` is already called.
+            modelStopData = .init(
+                response: response,
+                invocationState: invocationState,
+                usage: .zero
+            )
+        case .continue:
+            do {
+                if let continuation {
+                    for try await snapshot in session.streamResponse(
+                        to: "",
+                        metadata: dummyPromptMetadata
+                    ) {
+                        /// Always calculate the usage instead of using response.usage
+                        /// because `snapshot.usage` sometimes does not reflect the full usage of this invoke
+                        continuation.yield(
+                            .init(
+                                rawContent: snapshot.rawContent,
+                                usage: calculateUsageDiff(
+                                    before: beforeCallUsage,
+                                    after: session.usage
+                                )
                             )
                         )
+                    }
+                } else {
+                    let _ = try await session.respond(
+                        to: "",
+                        metadata: dummyPromptMetadata
                     )
                 }
-            } else {
-                let _ = try await session.respond(
-                    to: "",
-                    metadata: dummyPromptMetadata
+
+                let entry: Transcript.Response =
+                    self.session.lastResponse
+                    ?? .init(segments: [.text(.init(content: ""))])
+
+                /// Always calculate the usage instead of using response.usage
+                /// because `response.usage` sometimes does not reflect the full usage of this invoke
+                modelStopData = ModelStopData(
+                    response: entry,
+                    invocationState: invocationState,
+                    usage: calculateUsageDiff(
+                        before: beforeCallUsage,
+                        after: session.usage
+                    )
                 )
-            }
 
-            let entry: Transcript.Response =
-                self.session.lastResponse
-                ?? .init(segments: [.text(.init(content: ""))])
-
-            /// Always calculate the usage instead of using response.usage
-            /// because `response.usage` sometimes does not reflect the full usage of this invoke
-            modelStopData = ModelStopData(
-                response: entry,
-                invocationState: invocationState,
-                usage: calculateUsageDiff(
+            } catch {
+                let usage = calculateUsageDiff(
                     before: beforeCallUsage,
                     after: session.usage
                 )
-            )
 
-        } catch {
-            let usage = calculateUsageDiff(
-                before: beforeCallUsage,
-                after: session.usage
-            )
+//                if let error = error.responseFinishError {
+//                    modelStopData = ModelStopData(
+//                        response: error.response,
+//                        invocationState: invocationState,
+//                        usage: usage
+//                    )
+//                } else
+                if let error = error.toolCallsReceived {
+                    modelStopData = ModelStopData(
+                        toolCalls: error.toolCalls,
+                        invocationState: invocationState,
+                        usage: usage
+                    )
 
-            if let error = error.responseFinishError {
-                /// history already contains the response. returning it directly.
-                modelStopData = ModelStopData(
-                    response: error.response,
-                    invocationState: invocationState,
-                    usage: usage
-                )
-            }
-
-            //            else if let error = error.retryError {
-            //                return await retry(
-            //                    for: error,
-            //                    options: options,
-            //                    metadata: metadata
-            //                )
-            //
-            //            }
-
-            else if let error = error.toolCallsReceived {
-                modelStopData = ModelStopData(
-                    toolCalls: error.toolCalls,
-                    invocationState: invocationState,
-                    usage: usage
-                )
-
-            } else {
-                modelStopData = ModelStopData(
-                    error: error,
-                    invocationState: invocationState,
-                    usage: usage
-                )
+                } else {
+                    modelStopData = ModelStopData(
+                        error: error,
+                        invocationState: invocationState,
+                        usage: usage
+                    )
+                }
             }
         }
-
-        do {
-            try await self.afterModelCall()
-        } catch {
-
-        }
+        
+        continuation?.yield(.modelStop(modelStopData))
+        
+        await self.afterModelCall()
 
         return modelStopData
     }
@@ -542,34 +540,12 @@ public final class Agent: Sendable {
         return options
     }
 
-    /// Update tool calling mode based on the error to avoid infinite looping
-    private func buildRetryGenerationOptions(
-        _ options: GenerationOptions,
-        for error: RetryModelGenerationError
-    ) -> GenerationOptions {
-        var options = options
-        switch error {
-        case .afterToolOutput:
-            /// Make sure the `toolCallingMode` is not `required` to avoid an infinite tool-calling loop (which is one of the FoundationModels SDK bug as of 2026.10.12)
-            if options.toolCallingMode == .required {
-                options.toolCallingMode = .allowed
-            }
-        }
-        return options
-    }
 
     private var dummyPromptMetadata: [String: any ConvertibleToGeneratedContent]
     {
         [InternalMetadataKey.dummyPrompt: true]
     }
 
-    private func buildDummyPromptMetadata(
-        _ metadata: [String: any ConvertibleToGeneratedContent]
-    ) -> [String: any ConvertibleToGeneratedContent] {
-        var metadata = metadata
-        metadata[InternalMetadataKey.dummyPrompt] = true
-        return metadata
-    }
 
     public func streamResponse(
         to prompt: String,
@@ -816,9 +792,7 @@ extension Agent {
 
             /// Add the response entry to the history.
             ///
-            /// Doing this before calling the `handleOnResponse` because
-            /// the when `onResponse` is triggered by the system,
-            /// the `history` will contains the last `Transcript.Response`
+            /// No need to call `afterModelCall` here for clean-up because `beforeModelCall` is never called.
             self.history.append(.response(response))
 
             return .cancelled(response)
@@ -827,28 +801,41 @@ extension Agent {
         return .continue(event.prompt)
     }
 
-    //    private func handleInvocationCancelled(_ cancel: JSONValue) {
-    //        /// Add in the final prompt. Last-wins
-    //        self.history = history + [.prompt(event.prompt)]
-    //
-    //        let response = Transcript.Response(
-    //            segments: SegmentBuilder.segments(
-    //                from: cancel,
-    //                schemaName: "GeneratedContent"
-    //            )
-    //        )
-    //
-    //        /// Add the response entry to the history.
-    //        ///
-    //        /// Doing this before calling the `handleOnResponse` because
-    //        /// the when `onResponse` is triggered by the system,
-    //        /// the `history` will contains the last `Transcript.Response`
-    //        self.history.append(.response(response))
-    //
-    //    }
-
-    private func beforeModelCall() async {
+    private func beforeModelCall() async
+        -> BeforeModelCallEventHandler.CallbackHandlingResult
+    {
         print(#function)
+
+        let handlers = hookRegistry.beforeModelCallHandlers
+        var event = BeforeModelCallEventHandler.EventPayload(
+            agent: agentSnapshot
+        )
+
+        for handler in handlers {
+            await handler.callback(&event)
+        }
+
+        /// Model call cancelled with a cancelled content. last-wins.
+        /// Prompt is already in the history so there is no need to add it.
+        if let cancel = event.cancel {
+            let response = Transcript.Response(
+                segments: SegmentBuilder.segments(
+                    from: cancel,
+                    schemaName: "GeneratedContent"
+                )
+            )
+
+            /// Add the response entry to the history.
+            ///
+            /// Doing this before calling the `handleOnResponse` because
+            /// the when `onResponse` is triggered by the system,
+            /// the `history` will contains the last `Transcript.Response`
+            self.history.append(.response(response))
+
+            return .cancelled(response)
+        }
+
+        return .continue
     }
 
     private func afterModelCall() async {
@@ -864,7 +851,6 @@ extension Agent {
         print(#function)
         /// history will *not* contain the prompt as its last entry
         let handlers = hookRegistry.afterInvocationHandlers
-        //        var event = AfterInvocationEventHandler
         var event = AfterInvocationEventHandler.EventPayload(
             result: result,
             agent: agentSnapshot,
@@ -880,8 +866,7 @@ extension Agent {
             return .retry
         }
 
-        /// Invocation cancelled with a cancelled content. last-wins.
-        /// No `BeforeModelCall` opens, therefore there is no need to trigger `AfterModelCall` here.
+        /// Invocation resume with a new prompt.
         if let resume = event.resume {
             return .resume(resume)
         }
@@ -1359,9 +1344,9 @@ extension Error {
         return self.error(ToolCallsReceived.self)
     }
 
-    var responseFinishError: ResponseFinishedError? {
-        return self.error(ResponseFinishedError.self)
-    }
+//    var responseFinishError: ResponseFinishedError? {
+//        return self.error(ResponseFinishedError.self)
+//    }
 
     func isError<T: Error>(_ type: T.Type) -> Bool {
         return self.error(type) != nil

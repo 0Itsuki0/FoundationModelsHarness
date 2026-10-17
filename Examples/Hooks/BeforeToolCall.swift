@@ -19,13 +19,15 @@ enum BeforeToolCallExample {
     case toolCallMutation
 }
 
+private let prompt = "greet itsuki"
+
 private func testStream(_ agent: Agent) async throws {
-    await printStream(agent.streamResponse(to: "greet itsuki"))
+    await printStream(agent.streamResponse(to: prompt))
     printHistory(agent.history)
 }
 
 private func testRespond(_ agent: Agent) async throws {
-    let _ = await agent.respond(to: "greet itsuki")
+    let _ = await agent.respond(to: prompt)
     printHistory(agent.history)
 }
 

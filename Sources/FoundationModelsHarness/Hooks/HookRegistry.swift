@@ -36,32 +36,36 @@ struct HookRegistry {
     private(set) var beforeInvocationHandlers: [BeforeInvocationEventHandler]
 
     @HookOrdered
+    private(set) var beforeModelCallHandlers: [BeforeModelCallEventHandler]
+
+    @HookOrdered
     private(set) var beforeToolCallHandlers: [BeforeToolCallEventHandler]
 
     // MARK: - After Event
     @HookOrdered
     private(set) var afterToolCallHandlers: [AfterToolCallEventHandler]
-    
+
     @HookOrdered
     private(set) var afterInvocationHandlers: [AfterInvocationEventHandler]
 
-    
-//    @HookOrdered
-//    private(set) var afterModelCallHandlers: [AfterToolCallEventHandler]
-//
-//    
-//    @HookOrdered
-//    private(set) var afterInvocationHandlers: [AfterToolCallEventHandler]
-
+    //    @HookOrdered
+    //    private(set) var afterModelCallHandlers: [AfterToolCallEventHandler]
+    //
+    //
+    //    @HookOrdered
+    //    private(set) var afterInvocationHandlers: [AfterToolCallEventHandler]
 
     init(
         beforeInvocationHandlers: [BeforeInvocationEventHandler] = [],
+        beforeModelCallHandlers: [BeforeModelCallEventHandler] = [],
         beforeToolCallHandlers: [BeforeToolCallEventHandler] = [],
         afterToolCallHandlers: [AfterToolCallEventHandler] = [],
         afterInvocationHandlers: [AfterInvocationEventHandler] = []
     ) {
         self.beforeInvocationHandlers = beforeInvocationHandlers
+        self.beforeModelCallHandlers = beforeModelCallHandlers
         self.beforeToolCallHandlers = beforeToolCallHandlers
+
         self.afterToolCallHandlers = afterToolCallHandlers
         self.afterInvocationHandlers = afterInvocationHandlers
     }
@@ -72,6 +76,10 @@ struct HookRegistry {
             self.beforeInvocationHandlers.append(hook)
         }
 
+        if let hook = hook as? BeforeModelCallEventHandler {
+            self.beforeModelCallHandlers.append(hook)
+        }
+
         if let hook = hook as? BeforeToolCallEventHandler {
             self.beforeToolCallHandlers.append(hook)
         }
@@ -79,7 +87,7 @@ struct HookRegistry {
         if let hook = hook as? AfterToolCallEventHandler {
             self.afterToolCallHandlers.append(hook)
         }
-        
+
         if let hook = hook as? AfterInvocationEventHandler {
             self.afterInvocationHandlers.append(hook)
         }
@@ -89,6 +97,7 @@ struct HookRegistry {
 
     mutating func removeHook(_ id: HookID) {
         self.beforeInvocationHandlers.remove(id)
+        self.beforeModelCallHandlers.remove(id)
         self.beforeToolCallHandlers.remove(id)
         self.afterToolCallHandlers.remove(id)
         self.afterInvocationHandlers.remove(id)
@@ -99,6 +108,8 @@ struct HookRegistry {
             switch type {
             case .beforeInvocation:
                 self.beforeInvocationHandlers.removeAll()
+            case .beforeModelCall:
+                self.beforeModelCallHandlers.removeAll()
             case .beforeToolCall:
                 self.beforeToolCallHandlers.removeAll()
             case .afterToolCall:

@@ -68,10 +68,10 @@ let agent = Agent(
 )
 
 agent.addHook(
-    AfterInvocationEventHandler(callback: { event in
-        if event.agent.invocationState["resume"]?.asBool() == true {
-            event.resume = Prompt { "how's going?" }
-            event.agent.invocationState["resume"] = false
+    BeforeModelCallEventHandler(callback: { event in
+        if event.agent.history.last?.asPrompt == nil {
+            print("tool output")
+            event.cancel = "nope!"
         }
     })
 )
@@ -86,9 +86,9 @@ agent.addHook(
 //await agent.respond(to: "how's going")
 
 // testing stream
-await printStream(agent.streamResponse(to: "hello. greet itsuki.", invocationState: ["resume": true]))
+//await printStream(agent.streamResponse(to: "hello. greet itsuki.", invocationState: ["resume": true]))
 //await printStream(
 //    agent.streamResponse(to: "how's going?")
 //)
 //
-printHistory(agent.history)
+//printHistory(agent.history)

@@ -10,10 +10,10 @@ import FoundationModels
 /// - `delegatedToolOutput` - Delegated tool output
 /// - `contentUpdate` - streaming event from the model
 public enum AgentStreamEvent: Sendable {
-    //    public let event: Event
-    //
-    //    public var usage: LanguageModelSession.Usage
+
     case contentUpdate(GeneratedContent, LanguageModelSession.Usage)
+
+    case modelStop(ModelStopData)
 
     case refusal(Error, LanguageModelSession.Usage)
 
@@ -27,6 +27,8 @@ public enum AgentStreamEvent: Sendable {
         switch self {
         case .contentUpdate(let content, _):
             return content
+        case .modelStop(let stopData):
+            return stopData.rawContent
         case .refusal(_, _):
             return nil
         case .toolUse(let toolCall):
@@ -59,6 +61,10 @@ public enum AgentStreamEvent: Sendable {
         self = .contentUpdate(rawContent, usage)
     }
 
+    init(modelStop: ModelStopData) {
+        self = .modelStop(modelStop)
+    }
+
     init(toolCall: Transcript.ToolCall) {
         self = .toolUse(toolCall)
     }
@@ -78,19 +84,29 @@ public enum AgentStreamEvent: Sendable {
     }
 }
 
-//enum AgentStreamEvent {
-//    //    public enum Event: Sendable {
-//    case contentUpdate(GeneratedContent, LanguageModelSession.Usage)
-//
-//    case refusal(Error, LanguageModelSession.Usage)
-//
-//    case toolUse(Transcript.ToolCall)
-//
-//    case toolOutput(Transcript.ToolOutput)
-//
-//    case agentResult(AgentResult, LanguageModelSession.Usage)
-//    //    }
-//}
+extension AgentStreamEvent: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .contentUpdate(let content, _):
+            return "(Content update) \(content.jsonString)"
+        case .modelStop(let stopData):
+            return "(Model stop) \(stopData.description)"
+        case .refusal(let error, _):
+            return "(Refusal) \(error.localizedDescription)"
+        case .toolUse(let toolCall):
+            return "(Tool use) \(toolCall.description)"
+        case .toolResult(let result):
+            switch result {
+            case .success(let success):
+                return success.description
+            case .failure(let failure):
+                return "(Tool output) \(failure.localizedDescription)"
+            }
+        case .agentResult(let result, _):
+            return "(Agent result) \(result.description)"
+        }
+    }
+}
 
 extension Array where Element == Transcript.Segment {
     var rawContent: String {
