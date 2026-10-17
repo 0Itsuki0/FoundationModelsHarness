@@ -15,11 +15,7 @@ public protocol HookEventHandler: Sendable, Identifiable where ID == HookID {
 
     associatedtype EventPayload: Sendable
 
-    /// If an error is thrown here,
-    /// - the rest of the handlers for *this* event will be skipped
-    /// - the remaining *After* hooks will still be called
-    /// - error will be propagated up **directly** to the `AgentResult`
-    var callback: @Sendable (inout EventPayload) async throws -> Void { get }
+    var callback: @Sendable (inout EventPayload) async -> Void { get }
 
     var options: HookCallbackOptions? { get }
 

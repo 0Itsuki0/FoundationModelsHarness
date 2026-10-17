@@ -12,7 +12,7 @@ import FoundationModelsHarness
 ///
 /// Example:
 /// - `retry`: request a retry of the full invocation.
-/// - `resume`: Set to a non-nil value to re-invoke the agent. 
+/// - `resume`: Set to a non-nil value to re-invoke the agent.
 enum AfterInvocationExample {
     case retry
     case resume

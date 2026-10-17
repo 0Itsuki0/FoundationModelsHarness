@@ -116,7 +116,7 @@ public final class Agent: Sendable {
                 callback: { [weak self] event in
                     guard let self else { return }
                     if isDelegatedTool(event.toolCall.toolName) {
-                        event.endTurn = try JSONValue(
+                        event.endTurn = try? JSONValue(
                             event.toolOutput.segments.rawGeneratedContent
                         )
                         return
@@ -259,12 +259,6 @@ public final class Agent: Sendable {
                 toolExecutionMode: toolExecutionMode,
                 streamingInto: continuation
             )
-        case .callbackThrows(let error):
-            agentResult = AgentResult(
-                error: HookCallbackError(event: .beforeInvocation, error: error),
-                invocationState: invocationState,
-                usage: .zero
-            )
         }
 
         continuation?.yield(.init(result: agentResult, usage: .zero))
@@ -309,8 +303,6 @@ public final class Agent: Sendable {
                 session: session,
                 streamingInto: continuation
             )
-        case .callbackThrows(let error):
-            agentResult.setError(.init(event: .afterInvocation, error: error))
         case .finish:
             break
         }
@@ -696,10 +688,7 @@ extension Agent {
 
             for toolCall in toolCalls {
                 group.addTask { [callTool] in
-                    let result = await callTool(toolCall, continuation)
-                    return result.mapError({
-                        ToolCallError(toolCall: toolCall, error: $0)
-                    })
+                    return await callTool(toolCall, continuation)
                 }
             }
 
@@ -727,11 +716,7 @@ extension Agent {
                 for: toolCall,
                 streamingInto: continuation
             )
-            output.append(
-                result.mapError({
-                    ToolCallError(toolCall: toolCall, error: $0)
-                })
-            )
+            output.append(result)
         }
         return output
     }
@@ -741,15 +726,20 @@ extension Agent {
         streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation?
     ) async
-        -> Result<Transcript.ToolOutput, Error>
+        -> Result<Transcript.ToolOutput, ToolCallError>
     {
+        /// streaming event coming *before* hooks
+        /// Pro: immediate feed back instead of waiting for all hooks to finish
+        /// Con: in case the input is transformed in the hook, what user sees could be different to what is actually added to the session
+        continuation?.yield(.init(toolCall: toolCall))
+
+        await self.beforeToolCall()
+
+        let result: Result<Transcript.ToolOutput, ToolCallError>
+
         do {
-            try await self.beforeToolCall()
 
             let tool = try getTool(for: toolCall)
-
-            /// streaming event coming after hooks in case the input is transformed
-            continuation?.yield(.init(toolCall: toolCall))
 
             let toolOutput = try await tool.call(
                 arguments: toolCall.arguments
@@ -763,18 +753,19 @@ extension Agent {
                     schemaName: tool.parameters.name
                 )
             )
-
-            // TODO: this should be executed regardless of the above throws or not.
-            try await self.afterToolCall()
-
-            /// streaming event coming after hooks in case the output is transformed
-            continuation?.yield(.init(toolOutput: outputTranscript))
-
-            return .success(outputTranscript)
+            result = .success(outputTranscript)
         } catch {
-            return .failure(error)
+            result = .failure(ToolCallError(toolCall: toolCall, error: error))
         }
+
+        /// streaming event coming *before* hooks
+        /// Pro: immediate feed back instead of waiting for all hooks to finish
+        /// Con: in case the output is transformed in the hook, what user sees could be different to what is actually added to the session
+        continuation?.yield(.init(toolResult: result))
+        await self.afterToolCall()
+        return result
     }
+
 }
 
 extension LanguageModelSession.Usage {
@@ -807,13 +798,7 @@ extension Agent {
         )
 
         for handler in handlers {
-            do {
-                try await handler.callback(&event)
-            } catch {
-                /// NOTE:
-                /// In the case of `BeforeInvocationEventHandler` throws, no entries are added to the session history, including the prompt.
-                return .callbackThrows(error)
-            }
+            await handler.callback(&event)
         }
 
         /// Invocation cancelled with a cancelled content. last-wins.
@@ -862,11 +847,11 @@ extension Agent {
     //
     //    }
 
-    private func beforeModelCall() async throws {
+    private func beforeModelCall() async {
         print(#function)
     }
 
-    private func afterModelCall() async throws {
+    private func afterModelCall() async {
         print(#function)
     }
 
@@ -887,11 +872,7 @@ extension Agent {
         )
 
         for handler in handlers {
-            do {
-                try await handler.callback(&event)
-            } catch {
-                return .callbackThrows(error)
-            }
+            await handler.callback(&event)
         }
 
         /// Invocation retry requested. last-wins. Take priority over `resume`
@@ -937,11 +918,11 @@ extension Agent {
         )
     }
 
-    private func beforeToolCall() async throws {
+    private func beforeToolCall() async {
         print(#function)
     }
 
-    private func afterToolCall() async throws {
+    private func afterToolCall() async {
         print(#function)
     }
 
@@ -1038,7 +1019,7 @@ extension Agent {
         )
 
         for handler in handlers {
-            try await handler.callback(&event)
+            await handler.callback(&event)
         }
 
         // TODO: - handle event.toolOutput change
@@ -1118,7 +1099,7 @@ extension Agent {
         )
 
         for handler in handlers {
-            try await handler.callback(&event)
+            await handler.callback(&event)
         }
 
         /// Tool call cancelled with a cancelled content. last-wins.

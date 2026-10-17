@@ -19,7 +19,7 @@ public enum AgentStreamEvent: Sendable {
 
     case toolUse(Transcript.ToolCall)
 
-    case toolOutput(Transcript.ToolOutput)
+    case toolResult(Result<Transcript.ToolOutput, Error>)
 
     case agentResult(AgentResult, LanguageModelSession.Usage)
 
@@ -31,8 +31,15 @@ public enum AgentStreamEvent: Sendable {
             return nil
         case .toolUse(let toolCall):
             return toolCall.arguments
-        case .toolOutput(let toolOutput):
-            return toolOutput.segments.rawGeneratedContent
+        case .toolResult(let result):
+            switch result {
+            case .success(let success):
+                return success.segments.rawGeneratedContent
+            case .failure(let failure):
+                return GeneratedContent(
+                    kind: .string(failure.localizedDescription)
+                )
+            }
         case .agentResult(let result, _):
             return result.rawContent
         }
@@ -56,8 +63,10 @@ public enum AgentStreamEvent: Sendable {
         self = .toolUse(toolCall)
     }
 
-    init(toolOutput: Transcript.ToolOutput) {
-        self = .toolOutput(toolOutput)
+    init(toolResult: Result<Transcript.ToolOutput, ToolCallError>) {
+        self = .toolResult(
+            toolResult.mapError(\.error)
+        )
     }
 
     init(error: Error, usage: LanguageModelSession.Usage) {
