@@ -29,19 +29,19 @@ extension SessionPropertyValues {
 extension SessionPropertyValues {
     /// Tools registered to the agent.
     @SessionPropertyEntry
-    public var tools: [ToolConfig] = []
+    var tools: [ToolConfig] = []
 
     /// Default invocation options that will be used when building respond / streamResponse request.
     @SessionPropertyEntry
-    public var defaultInvocationOptions: InvocationOptions = InvocationOptions()
+    var defaultInvocationOptions: InvocationOptions = InvocationOptions()
 
     /// Instruction used by the model
     @SessionPropertyEntry
-    public var instruction: Instructions = Instructions {}
+    var instruction: Instructions = Instructions {}
 
     /// Current model used by the agent.
     @SessionPropertyEntry
-    public var model: any LanguageModel = SystemLanguageModel()
+    var model: any LanguageModel = SystemLanguageModel()
 
     @SessionPropertyEntry
     var hookRegistry: HookRegistry = .init()
@@ -195,7 +195,10 @@ public final class Agent: Sendable {
         self.delegatedToolName.contains(toolName)
     }
 
-    
+    private var agentSnapshot: AgentSnapshot {
+        AgentSnapshot(session: self.session)
+    }
+
     /// Create an agent with configurations.
     ///
     /// - Parameters:
@@ -1407,13 +1410,6 @@ extension Agent {
         return self.tools.first(where: {
             $0.invocableTool.name == name
         })?.invocableTool
-    }
-
-    var agentSnapshot: AgentSnapshot {
-        AgentSnapshot(
-            session: self.session,
-            history: history
-        )
     }
 
     func toolOutputSegments<Output: PromptRepresentable>(

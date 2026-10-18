@@ -29,6 +29,7 @@ public struct AfterInvocationEventHandler: HookEventHandler {
         /// - `agentState`: Agent state persists across requests. Read/write.
         /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
         /// - `history`: The transcript entries excluding the leading instructions entry, if present, including the last response, if not errored.
+        /// - `tools`: currently registered tools
         public let agent: AgentSnapshot
 
         /// Boolean flag that can be set by hook callbacks to request a retry of the full invocation.

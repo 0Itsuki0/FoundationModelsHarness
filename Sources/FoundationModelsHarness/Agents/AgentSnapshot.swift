@@ -7,11 +7,7 @@
 
 import FoundationModels
 
-// TODO: - add in other properties: strands-ts/src/types/agent.ts
-
-/// Interface for agents with locally accessible state, messages, tools, and hooks.
-///
-/// This interface is only for accessing state in hook events.
+/// Interface for agents with locally accessible state, messages, and tools.
 public final class AgentSnapshot: Sendable {
     private let session: LanguageModelSession
 
@@ -43,12 +39,15 @@ public final class AgentSnapshot: Sendable {
     }
 
     /// The transcript entries excluding the leading instructions entry, if present.
-    ///
-    /// Read only
     public let history: Transcript.HistoryView
 
-    init(session: LanguageModelSession, history: Transcript.HistoryView) {
+    /// Currently registered tools.
+    public let tools: [ToolConfig]
+
+    init(session: LanguageModelSession) {
         self.session = session
-        self.history = history
+        /// assign at `init` in case `history` and `tools` are modified else where.
+        self.history = session.transcript.history
+        self.tools = session.properties.tools
     }
 }

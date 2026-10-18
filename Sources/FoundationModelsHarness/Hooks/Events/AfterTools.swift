@@ -29,6 +29,7 @@ public struct AfterToolsEventHandler: HookEventHandler {
         /// - `agentState`: Agent state persists across requests. Read/write.
         /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
         /// - `history`: The transcript entries excluding the leading instructions entry, if present, including non-error tool outputs.
+        /// - `tools`: currently registered tools
         public let agent: AgentSnapshot
 
         /// Set to a non-nil value to end the turn (agent loop) without calling the model again, aka: short-circuit to the output. (`JSONValue.null` will end the turn.)

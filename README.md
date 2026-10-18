@@ -1,20 +1,35 @@
 # (WIP) Foundation Models Harness
 
-
 ## Overview
 
-Foundation Models Harness is a Swift package for building and running AI agents on top of Apple's [Foundation Models](https://developer.apple.com/documentation/foundationmodels) framework, inspired by [Strands Agents](https://github.com/strands-agents/harness-sdk). It wraps a `LanguageModelSession` in an `Agent` that owns the agent loop: model calls, tool execution, and the lifecycle around them all run in your process, with no hosted control plane.
+Foundation Models Harness is a Swift package for building and running AI agents on top of Apple's [Foundation Models](https://developer.apple.com/documentation/foundationmodels) framework, inspired by [Strands Agents](https://github.com/strands-agents/harness-sdk). It wraps a `LanguageModelSession` in an `Agent` that owns the agent loop: model calls, tool execution, and the lifecycle around them.
 
-On top of the plain session, you get:
+On top of the plain session, we get:
 
-- **An explicit agent loop.** Tools are invoked programmatically by the harness instead of the framework, so every model call and every tool call can be observed, mutated, cancelled, or retried.
-- **[Hooks](#hooks)** to intercept any step of the loop to log it, validate it, or redirect it.
+- **[Hooks](#hooks)** to intercept agent life cycles to, for example, monitoring agent execution and tool usage, modifying tool calls, retrying tool calls and model calls.
 - **[Plugins](#plugins)** to bundle hooks and tools into reusable behaviors.
 - **[Tool delegation](#tool-delegation)** to return a tool's output directly to the user as the final answer.
-- **State** shared between the app, hooks, and tools: `agentState` persists across requests, and `invocationState` lives for a single invocation. Neither is sent to the model.
-- **Streaming** via `streamResponse`, emitting model snapshots, tool calls, tool results, and the final result as `AgentStreamEvent`s.
+- **State** shared between the agent, hooks, and tools, without sending anything to the model:
+    - `agentState` persists across requests
+    - `invocationState` lives for a single invocation.
 
 Requires iOS / macOS / visionOS / watchOS 27.2+ and Swift 6.4+.
+
+### Installation
+
+Add the package with Swift Package Manager. In Xcode, choose **File > Add Package Dependencies…** and enter `https://github.com/0Itsuki0/FoundationModelsHarness`. Or add it to your `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/0Itsuki0/FoundationModelsHarness", branch: "main"),
+],
+targets: [
+    .target(
+        name: "YourTarget",
+        dependencies: ["FoundationModelsHarness"]
+    ),
+]
+```
 
 ### Quick Start
 
@@ -55,27 +70,19 @@ Hooks let you add logging, validation, guardrails, or custom logic at any point 
 
 | Event | When | What a callback can do |
 |-------|------|------------------------|
-| `BeforeInvocationEventHandler` | Start of an agent request, before the prompt is added to the history | Mutate `prompt`; set `cancel` to end the invocation with that content as the response |
-| `BeforeModelCallEventHandler` | Just before the model is invoked | Set `cancel` to skip the model call with that content as the response |
-| `BeforeToolsEventHandler` | Before executing the tool calls of a turn | Set `cancel` to cancel all tool calls with that content as their output |
-| `BeforeToolCallEventHandler` | Just before a single tool is executed | Mutate `toolCall` (name / arguments); set `cancel` to cancel the call with that content as its output |
-| `AfterToolCallEventHandler` | After a single tool completes | Mutate `toolResult`; set `retry` to run the tool again (`attemptCount` available) |
-| `AfterToolsEventHandler` | After all tool calls of a turn complete | Set `endTurn` to end the loop with that content as the final response |
-| `AfterModelCallEventHandler` | After the model call completes | Mutate `stopReason` (`endTurn` / `toolUse` / `refusal`); set `retry` to call the model again (`attemptCount` available) |
-| `AfterInvocationEventHandler` | End of an agent request | Read `result`; set `retry` to rerun the invocation, or `resume` with a new prompt |
+| `BeforeInvocation` | Start of an agent request, before the prompt is added to the history | Mutate `prompt`; set `cancel` to end the invocation with that content as the response |
+| `BeforeModelCall` | Just before the model is invoked | Set `cancel` to skip the model call with that content as the response |
+| `BeforeTools` | Before executing the tool calls of a turn | Set `cancel` to cancel all tool calls with that content as their output |
+| `BeforeToolCall` | Just before a single tool is executed | Mutate `toolCall` (name / arguments); set `cancel` to cancel the call with that content as its output |
+| `AfterToolCall` | After a single tool completes | Mutate `toolResult`; set `retry` to run the tool again (`attemptCount` available) |
+| `AfterTools` | After all tool calls of a turn complete | Set `endTurn` to end the loop with that content as the final response |
+| `AfterModelCall` | After the model call completes | Mutate `stopReason` (`endTurn` / `toolUse` / `refusal`); set `retry` to call the model again (`attemptCount` available) |
+| `AfterInvocation` | End of an agent request | Read `result`; set `retry` to rerun the invocation, or `resume` with a new prompt |
 
 Every event payload also carries an `agent` snapshot to read the `history` and read or write `agentState` / `invocationState`.
 
 ```swift
 let id = agent.addHook(
-    BeforeToolCallEventHandler(callback: { event in
-        // count tool calls in the agent state
-        let count = event.agent.agentState["tool_count"]?.asInt() ?? 0
-        event.agent.agentState["tool_count"] = .number(Double(count + 1))
-    })
-)
-
-agent.addHook(
     AfterModelCallEventHandler(callback: { event in
         // retry once on refusal
         if case .refusal = event.stopReason, event.attemptCount < 2 {
@@ -177,7 +184,7 @@ Delegation is built in as the `ToolDelegationPlugin`, using the same hooks avail
 ### Current Progress
 
 1. Tool delegation
-2. Hook: 
+2. Hook:
     - BeforeToolCall (partial)
     - AfterToolCall (partial)
 
@@ -187,7 +194,7 @@ Delegation is built in as the `ToolDelegationPlugin`, using the same hooks avail
 Dynamic profile: https://developer.apple.com/documentation/foundationmodels/composing-dynamic-sessions-with-instructions-and-profiles
 
 - Tools
-    - vendored tools: 
+    - vendored tools:
         - https://github.com/strands-agents/tools
         - https://github.com/strands-agents/harness-sdk/tree/main/harness-ts/src/tools
         - https://github.com/strands-agents/harness-sdk/blob/main/harness-ts/src/builtin-tools.ts
@@ -195,7 +202,7 @@ Dynamic profile: https://developer.apple.com/documentation/foundationmodels/comp
     - Delegated tools: maybe a combination of [onToolOutput](https://developer.apple.com/documentation/foundationmodels/languagemodelsession/dynamicprofile/ontooloutput(perform:)) + throwing + history session property + [transcriptErrorHandlingPolicy](https://developer.apple.com/documentation/foundationmodels/languagemodelsession/transcripterrorhandlingpolicy) to preserveTranscript
         ```swift
         // Get a reference to the session history.
-        @SessionProperty(\.history) 
+        @SessionProperty(\.history)
         var history
 
         var body: some LanguageModelSession.DynamicProfile {
@@ -203,8 +210,8 @@ Dynamic profile: https://developer.apple.com/documentation/foundationmodels/comp
                 Instructions("You are a helpful assistant.")
                 TodoWriteTool()
             }
-            .onResponse { 
-                // When the entries exceed `100`, perform a stateful update to the 
+            .onResponse {
+                // When the entries exceed `100`, perform a stateful update to the
                 // history so it only includes the last `50` entries.
                 if history.count > 100 {
                     history = history.suffix(50)
@@ -216,18 +223,18 @@ Dynamic profile: https://developer.apple.com/documentation/foundationmodels/comp
     - additional states(see next point) available to tools
 - State: agent state (key-value data that lives outside the conversation context and persists across requests) and invocation state (contextual data that lives for a single invocation)
     - Key: [SessionPropertyValues](https://developer.apple.com/documentation/foundationmodels/sessionpropertyvalues): When you need session-scoped properties beyond the built-in history, apply the SessionPropertyEntry() macro to a stored property in an extension on SessionPropertyValues. This makes the property accessible from the components within the session when you use LanguageModelSession.SessionProperty. For example, to create a custom Tool to access shared state, extend SessionPropertyValues with a new property and then access it with LanguageModelSession.SessionProperty from the tool (from https://developer.apple.com/documentation/foundationmodels/composing-dynamic-sessions-with-instructions-and-profiles):
-        
+
         ```swift
         extension SessionPropertyValues {
-            @SessionPropertyEntry 
+            @SessionPropertyEntry
             var activatedSkills: [String: Bool] = [:]
         }
 
         struct PlannerTool: Tool {
             let description = "Update the state of the activated skills"
-            
+
             // Read the shared session state for the currently activated skills.
-            @SessionProperty(\.activatedSkills) 
+            @SessionProperty(\.activatedSkills)
             var activatedSkills
 
 
@@ -270,9 +277,9 @@ Dynamic profile: https://developer.apple.com/documentation/foundationmodels/comp
     - graph: https://strandsagents.com/docs/user-guide/sdk/multi-agent/graph/
     - workflow: https://strandsagents.com/docs/user-guide/sdk/multi-agent/workflow/
 - context injection
-- Retry Strategies 
+- Retry Strategies
     - https://strandsagents.com/docs/user-guide/sdk/agents/retry-strategies/
-- fallback: 
+- fallback:
     - for example, a fall back model
         ```ts
         const router = new ModelRouter([
@@ -281,7 +288,7 @@ Dynamic profile: https://developer.apple.com/documentation/foundationmodels/comp
         ])
         const agent = new Agent({ model: router })
         ```
-    - https://strandsagents.com/docs/api/typescript/FallbackStrategy/ 
+    - https://strandsagents.com/docs/api/typescript/FallbackStrategy/
 - Hook
     - should just a be a wrapper around the life cycle modifiers: https://medium.com/@itsuki.enjoy/swift-hooks-for-foundation-models-a-little-cleaner-way-c822ed2cb25b
 - Plugin
@@ -328,7 +335,7 @@ await createHarness({
 (`errors.ts:236`) |
 | `interrupt`, `checkpoint` | The caller or a hook, deliberately pausing |
 
-  
+
   Even the provider "error-ish" ones (refusal, content filter, guardrail) come back as results, because the model still produced a
   coherent final message.
 

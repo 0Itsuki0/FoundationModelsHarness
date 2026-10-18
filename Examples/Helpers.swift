@@ -12,6 +12,13 @@ struct GreetingTool: Tool {
     let name = "greet"
     let description = "greet a name."
 
+    /// accessing states from the tools if necessary
+    @SessionProperty(\.agentState)
+    private var agentState
+
+    @SessionProperty(\.invocationState)
+    private var invocationState
+
     @Generable
     struct Arguments {
         @Guide(description: "The name to greet")
