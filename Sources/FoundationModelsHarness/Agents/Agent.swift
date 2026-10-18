@@ -94,11 +94,12 @@ public struct InvocationOptions: Sendable {
     }
 }
 
-extension Transcript.Prompt {
-    static let dummyPrompt = Transcript.Prompt(
-        metadata: [InternalMetadataKey.dummyPrompt: true],
-        segments: [],
-    )
+/// Strategy for executing tool calls that the model emits in a single assistant turn.
+/// - `parallel`: runs all tool calls from a single turn in parallel.
+/// - `sequential`: runs tool calls one at a time
+public enum ToolExecutionMode: Sendable, Equatable, Hashable {
+    case sequential
+    case parallel
 }
 
 @Observable
@@ -199,6 +200,11 @@ public final class Agent: Sendable {
         AgentSnapshot(session: self.session)
     }
 
+    private var dummyPromptMetadata: [String: any ConvertibleToGeneratedContent]
+    {
+        [InternalMetadataKey.dummyPrompt: true]
+    }
+
     /// Create an agent with configurations.
     ///
     /// - Parameters:
@@ -277,9 +283,9 @@ public final class Agent: Sendable {
     ///
     /// - Parameters:
     ///   - prompt: A prompt for the model to respond to.
-    ///   - metadata: Metadata provided as part of this prompt.
+    ///   - schema: A response format that describes the output structure.
     ///   - options: Options that control how tokens are sampled from the distribution the model produces.
-    ///   - responseFormat: A response format that describes the output structure.
+    ///   - metadata: Metadata provided as part of this prompt.
     ///   - contextOptions: Settings that configure how the model is prompted.
     ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
     ///   - toolExecutionMode: Strategy for executing tool calls that the model emits in a single assistant turn.
@@ -310,9 +316,75 @@ public final class Agent: Sendable {
     ///
     /// - Parameters:
     ///   - prompt: A prompt for the model to respond to.
-    ///   - metadata: Metadata provided as part of this prompt.
+    ///   - type: A response format that describes the output structure.
     ///   - options: Options that control how tokens are sampled from the distribution the model produces.
-    ///   - responseFormat: A response format that describes the output structure.
+    ///   - metadata: Metadata provided as part of this prompt.
+    ///   - contextOptions: Settings that configure how the model is prompted.
+    ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
+    ///   - toolExecutionMode: Strategy for executing tool calls that the model emits in a single assistant turn.
+    ///
+    /// Passing nil for parameters other than `prompt` to use the `defaultInvocationOptions`.
+    @discardableResult
+    public func respond<Content: Generable>(
+        to prompt: String,
+        generating type: Content.Type,
+        options: GenerationOptions? = nil,
+        metadata: [String: any ConvertibleToGeneratedContent]? = nil,
+        contextOptions: ContextOptions? = nil,
+        invocationState: InvocationState? = nil,
+        toolExecutionMode: ToolExecutionMode? = nil,
+    ) async -> AgentResult {
+        return await self.respond(
+            to: Prompt(prompt),
+            schema: Content.generationSchema,
+            options: options,
+            metadata: metadata,
+            contextOptions: contextOptions,
+            invocationState: invocationState,
+            toolExecutionMode: toolExecutionMode
+        )
+    }
+
+    /// Produces a generated content type as a response to a prompt and schema.
+    ///
+    /// - Parameters:
+    ///   - prompt: A prompt for the model to respond to.
+    ///   - type: A response format that describes the output structure.
+    ///   - options: Options that control how tokens are sampled from the distribution the model produces.
+    ///   - metadata: Metadata provided as part of this prompt.
+    ///   - contextOptions: Settings that configure how the model is prompted.
+    ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
+    ///   - toolExecutionMode: Strategy for executing tool calls that the model emits in a single assistant turn.
+    ///
+    /// Passing nil for parameters other than `prompt` to use the `defaultInvocationOptions`.
+    @discardableResult
+    public func respond<Content: Generable>(
+        to prompt: Prompt,
+        generating type: Content.Type,
+        options: GenerationOptions? = nil,
+        metadata: [String: any ConvertibleToGeneratedContent]? = nil,
+        contextOptions: ContextOptions? = nil,
+        invocationState: InvocationState? = nil,
+        toolExecutionMode: ToolExecutionMode? = nil,
+    ) async -> AgentResult {
+        return await self.respond(
+            to: Prompt(prompt),
+            schema: Content.generationSchema,
+            options: options,
+            metadata: metadata,
+            contextOptions: contextOptions,
+            invocationState: invocationState,
+            toolExecutionMode: toolExecutionMode
+        )
+    }
+
+    /// Produces a generated content type as a response to a prompt and schema.
+    ///
+    /// - Parameters:
+    ///   - prompt: A prompt for the model to respond to.
+    ///   - schema: A response format that describes the output structure.
+    ///   - options: Options that control how tokens are sampled from the distribution the model produces.
+    ///   - metadata: Metadata provided as part of this prompt.
     ///   - contextOptions: Settings that configure how the model is prompted.
     ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
     ///   - toolExecutionMode: Strategy for executing tool calls that the model emits in a single assistant turn.
@@ -633,6 +705,7 @@ public final class Agent: Sendable {
             )
         case .continue:
             do {
+                var rawContent: GeneratedContent = ""
                 if let continuation {
                     for try await snapshot in session.streamResponse(
                         to: "",
@@ -649,17 +722,24 @@ public final class Agent: Sendable {
                                 )
                             )
                         )
+                        rawContent = snapshot.rawContent
                     }
                 } else {
-                    let _ = try await session.respond(
+                    let response = try await session.respond(
                         to: "",
                         metadata: dummyPromptMetadata
                     )
+                    rawContent = response.rawContent
                 }
 
                 let entry: Transcript.Response =
                     self.session.lastResponse
-                    ?? .init(segments: [.text(.init(content: ""))])
+                    ?? .init(
+                        segments: SegmentBuilder.segments(
+                            from: rawContent,
+                            schemaName: "GeneratedContent"
+                        )
+                    )
 
                 /// Always calculate the usage instead of using response.usage
                 /// because `response.usage` sometimes does not reflect the full usage of this invoke
@@ -751,22 +831,6 @@ public final class Agent: Sendable {
         )
     }
 
-    private func generationOptionsForToolResponse(
-        _ options: GenerationOptions
-    ) -> GenerationOptions {
-        var options = options
-        /// Make sure the `toolCallingMode` is not `required` to avoid an infinite tool-calling loop (which is one of the FoundationModels SDK bug as of 2026.10.12)
-        if options.toolCallingMode == .required {
-            options.toolCallingMode = .allowed
-        }
-        return options
-    }
-
-    private var dummyPromptMetadata: [String: any ConvertibleToGeneratedContent]
-    {
-        [InternalMetadataKey.dummyPrompt: true]
-    }
-
     /// Produces a response stream to a prompt.
     ///
     /// - Parameters:
@@ -791,6 +855,72 @@ public final class Agent: Sendable {
         return self.streamResponse(
             to: Prompt(prompt),
             schema: schema,
+            options: options,
+            metadata: metadata,
+            contextOptions: contextOptions,
+            invocationState: invocationState,
+            toolExecutionMode: toolExecutionMode
+        )
+    }
+
+    /// Produces a generated content type as a response to a prompt and schema.
+    ///
+    /// - Parameters:
+    ///   - prompt: A prompt for the model to respond to.
+    ///   - type: A response format that describes the output structure.
+    ///   - options: Options that control how tokens are sampled from the distribution the model produces.
+    ///   - metadata: Metadata provided as part of this prompt.
+    ///   - contextOptions: Settings that configure how the model is prompted.
+    ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
+    ///   - toolExecutionMode: Strategy for executing tool calls that the model emits in a single assistant turn.
+    ///
+    /// Passing nil for parameters other than `prompt` to use the `defaultInvocationOptions`.
+    @discardableResult
+    public func streamResponse<Content: Generable>(
+        to prompt: String,
+        generating type: Content.Type,
+        options: GenerationOptions? = nil,
+        metadata: [String: any ConvertibleToGeneratedContent]? = nil,
+        contextOptions: ContextOptions? = nil,
+        invocationState: InvocationState? = nil,
+        toolExecutionMode: ToolExecutionMode? = nil,
+    ) -> AsyncStream<AgentStreamEvent> {
+        return self.streamResponse(
+            to: Prompt(prompt),
+            schema: Content.generationSchema,
+            options: options,
+            metadata: metadata,
+            contextOptions: contextOptions,
+            invocationState: invocationState,
+            toolExecutionMode: toolExecutionMode
+        )
+    }
+
+    /// Produces a generated content type as a response to a prompt and schema.
+    ///
+    /// - Parameters:
+    ///   - prompt: A prompt for the model to respond to.
+    ///   - type: A response format that describes the output structure.
+    ///   - options: Options that control how tokens are sampled from the distribution the model produces.
+    ///   - metadata: Metadata provided as part of this prompt.
+    ///   - contextOptions: Settings that configure how the model is prompted.
+    ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
+    ///   - toolExecutionMode: Strategy for executing tool calls that the model emits in a single assistant turn.
+    ///
+    /// Passing nil for parameters other than `prompt` to use the `defaultInvocationOptions`.
+    @discardableResult
+    public func streamResponse<Content: Generable>(
+        to prompt: Prompt,
+        generating type: Content.Type,
+        options: GenerationOptions? = nil,
+        metadata: [String: any ConvertibleToGeneratedContent]? = nil,
+        contextOptions: ContextOptions? = nil,
+        invocationState: InvocationState? = nil,
+        toolExecutionMode: ToolExecutionMode? = nil,
+    ) -> AsyncStream<AgentStreamEvent> {
+        return self.streamResponse(
+            to: Prompt(prompt),
+            schema: Content.generationSchema,
             options: options,
             metadata: metadata,
             contextOptions: contextOptions,
@@ -854,21 +984,6 @@ public final class Agent: Sendable {
             }
         }
     }
-}
-
-/// Strategy for executing tool calls that the model emits in a single assistant turn.
-/// - `parallel`: runs all tool calls from a single turn in parallel.
-/// - `sequential`: runs tool calls one at a time
-public enum ToolExecutionMode: Sendable, Equatable, Hashable {
-    case sequential
-    case parallel
-}
-
-public struct ToolCallResult: Sendable {
-    public let toolCall: Transcript.ToolCall
-
-    /// The error here, if present, will be penetrate to the `AgentResult` directly as `AgentStopReason.ToolCallError`
-    public let result: Result<Transcript.ToolOutput, Error>
 }
 
 extension Agent {

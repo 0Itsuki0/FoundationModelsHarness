@@ -34,6 +34,10 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
         /// Otherwise, when we throw a FakeError, the previous request from the user will also be lost.
         .transcriptErrorHandlingPolicy(.preserveTranscript)
         .onPrompt {
+            /// remove the dummy (empty) prompt added only for triggering model invocation
+            /// Modifying history here works because
+            /// 1. Foundation language models executing normally as long as the last transcript is tool output or user's prompt
+            /// 2. modifying history directly here does effect what the model sees.
             history.removeDummyPrompt()
         }
         .onToolCall { toolCall in
