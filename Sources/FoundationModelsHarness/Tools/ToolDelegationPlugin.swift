@@ -1,0 +1,154 @@
+//
+//  ToolDelegationPlugin.swift
+//  FoundationModelsHarness
+//
+//  Created by Itsuki on 2026/10/18.
+//
+
+import FoundationModels
+
+/// ToolDelegationPlugin:
+/// short-circuit tool output directly to agent output (if success) instead of sending the tool output back to the model to generate a final response.
+///
+/// using an `actor` here to handle potential parallel hook callbacks.
+actor ToolDelegationPlugin: Plugin {
+    static let name: String = "FoundationModelsHarness_DelegationPlugin"
+
+    let tools: [ToolConfig] = []
+
+    private let delegatedTools: [String]
+
+    /// current delegated tool that is being executed.
+    private var executingToolCallId: Transcript.ToolCall.ID?
+
+    init(_ delegatedTools: [String]) {
+        self.delegatedTools = delegatedTools
+    }
+
+    nonisolated var hooks: [any HookEventHandler] {
+        return [
+            BeforeModelCallEventHandler(
+                callback: { _ in await self.reset() },
+                options: .init(order: BuiltInHookOrder.sdkLast.rawValue)
+            ),
+            BeforeToolCallEventHandler(
+                callback: { await self.beforeToolCall(&$0) },
+                options: .init(order: BuiltInHookOrder.sdkLast.rawValue)
+            ),
+            AfterToolsEventHandler(
+                callback: { await self.afterTools(&$0) },
+                options: .init(order: BuiltInHookOrder.sdkLast.rawValue)
+            ),
+        ]
+    }
+
+    private func getExecutingToolCallId() -> String? {
+        return self.executingToolCallId
+    }
+
+    private func eraseExecutingToolCallId() {
+        self.executingToolCallId = nil
+        return
+    }
+
+    /// returning whether if the set is successful or not
+    /// Get and set in one transaction to make sure that it is reflected correctly even when multiple hook callback is fired in parallel.
+    private func trySetExecutingToolCallId(_ name: String) -> Bool {
+        guard self.executingToolCallId == nil else {
+            return false
+        }
+        self.executingToolCallId = name
+        return true
+    }
+
+    /// reset the `executingToolCallId` per model call (NOT per invoke) so that the state can be fresh on retries or continuous model invocations.
+    nonisolated private func reset() async {
+        await self.eraseExecutingToolCallId()
+    }
+
+    /// cancel all other tool calls that are not delegated tools if there is a delegated tool being / will be executed this turn
+    nonisolated private func beforeToolCall(
+        _ event: inout BeforeToolCallEventHandler.EventPayload
+    ) async {
+        /// no delegated tool calls in this turn at all. return early.
+        guard
+            event.toolCalls.map(\.toolName).contains(where: {
+                self.delegatedTools.contains($0)
+            })
+        else { return }
+
+        /// current tool being executed is the delegated tool && no delegated tool is being executed yet.
+        /// If the tool mode is parallel, those might still coming in before
+        if self.delegatedTools.contains(event.toolCall.toolName),
+            await self.trySetExecutingToolCallId(event.toolCall.id)
+        {
+            return
+        }
+
+        /// already executing some other deleted tool or
+        /// a delegated tool is pending to be executed.
+        /// cancel the current tool call
+        cancelToolCall(&event)
+        return
+
+    }
+
+    nonisolated private func cancelToolCall(
+        _ event: inout BeforeToolCallEventHandler.EventPayload
+    ) {
+        event.cancel = .string(
+            """
+            This tool call [\(event.toolCall)] is cancelled because another delegated tool is being called and a delegated tool has to be the **only** tool called in the turn.
+            Try again.
+            """
+        )
+    }
+
+    nonisolated private func afterTools(
+        _ event: inout AfterToolsEventHandler.EventPayload
+    ) async {
+        let executingId = await self.getExecutingToolCallId()
+        guard
+            let first = event.toolResults.first(where: {
+                $0.toolCall.id == executingId
+            })
+        else {
+            return
+        }
+
+        switch first.result {
+        case .success(let success):
+            event.endTurn =
+                (try? JSONValue(success.segments.rawGeneratedContent))
+                ?? .string(success.segments.description)
+        case .failure(_):
+            /// errors will be penetrated directly to the agent result as toolCallError
+            return
+        }
+    }
+}
+
+extension ToolDelegationPlugin {
+    static let DELEGATION_DESCRIPTION_SUFFIX = """
+        Calling any delegated tool will return its response directly to the user as the final answer.
+        It should be the **only** tool called in the turn.
+        """
+
+    static func injectDelegationPrompt(
+        for tools: [ToolConfig],
+        on instruction: Instructions
+    ) -> Instructions {
+        let delegatedTools = tools.filter({ $0.delegate })
+        let toolNames = delegatedTools.map(\.tool.name)
+        guard !toolNames.isEmpty else {
+            return instruction
+        }
+        return Instructions {
+            instruction
+            """
+            Delegated Tools: \(toolNames.joined(separator: ", "))
+            \(DELEGATION_DESCRIPTION_SUFFIX)
+            """
+        }
+    }
+}

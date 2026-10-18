@@ -9,6 +9,9 @@ import Foundation
 
 public typealias HookID = UUID
 
+/// Event handlers protocol.
+/// Do **NOT** implement this protocol. Use the provided life cycle handlers instead.
+/// This protocol is only exported for typing purpose and any custom implementations will be ignored.
 public protocol HookEventHandler: Identifiable where ID == HookID {
     static var eventType: HookEventType { get }
     static var useReverseOrder: Bool { get }

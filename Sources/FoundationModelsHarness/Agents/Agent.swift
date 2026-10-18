@@ -22,6 +22,12 @@ extension SessionPropertyValues {
 
     @SessionPropertyEntry
     var hookRegistry: HookRegistry = .init()
+
+    @SessionPropertyEntry
+    var pluginRegistry: PluginRegistry = .init()
+
+    @SessionPropertyEntry
+    var tools: [ToolConfig] = []
 }
 
 public typealias InvocationState = [String: JSONValue]
@@ -81,15 +87,22 @@ public final class Agent: Sendable {
     }
 
     private var hookRegistry: HookRegistry {
+        session.properties.hookRegistry
+    }
+
+    private var pluginRegistry: PluginRegistry {
+        session.properties.pluginRegistry
+    }
+
+    private var tools: [ToolConfig] {
         get {
-            session.properties.hookRegistry
+            session.properties.tools
         }
         set {
-            session.properties.hookRegistry = newValue
+            session.properties.tools = newValue
         }
     }
 
-    private let tools: [ToolConfig]
     private var delegatedToolName: [String] {
         self.tools.filter({ $0.delegate }).map(\.invocableTool.name)
     }
@@ -99,11 +112,11 @@ public final class Agent: Sendable {
     }
 
     public init(tools: [ToolConfig], instruction: Instructions) {
-        let instruction = ToolConfig.injectDelegationPrompt(
+        let instruction = ToolDelegationPlugin.injectDelegationPrompt(
             for: tools,
             on: instruction
         )
-        let profile = AgentProfile(tools: tools, instruction: instruction)
+        let profile = AgentProfile(instruction: instruction)
         let session = LanguageModelSession(profile: profile)
         self.session = session
         self.tools = tools
@@ -111,21 +124,27 @@ public final class Agent: Sendable {
     }
 
     private func setupBuiltInHooks() {
-        // TODO:  - fix delegation hook to use after tools
-        //        self.addHook(
-        //            AfterToolCallEventHandler(
-        //                callback: { [weak self] event in
-        //                    guard let self else { return }
-        //                    if isDelegatedTool(event.toolCall.toolName) {
-        //                        event.endTurn = try? JSONValue(
-        //                            event.toolOutput.segments.rawGeneratedContent
-        //                        )
-        //                        return
-        //                    }
-        //                },
-        //                options: .init(order: BuiltInHookOrder.sdkLast.rawValue)
-        //            )
-        //        )
+        self.addPlugin(ToolDelegationPlugin(self.delegatedToolName))
+    }
+
+    @discardableResult
+    public func addPlugin<T: Plugin>(_ plugin: T) -> String {
+        return self.pluginRegistry.registerPlugin(plugin, to: self)
+    }
+
+    public func removePlugin(_ name: String) {
+        self.pluginRegistry.removePlugin(name, from: self)
+    }
+
+    @discardableResult
+    public func addTool(_ tool: ToolConfig) -> String {
+        self.removeTool(tool.toolName)
+        self.tools.append(tool)
+        return tool.toolName
+    }
+
+    public func removeTool(_ name: String) {
+        self.tools.removeAll(where: { $0.toolName == name })
     }
 
     @discardableResult
@@ -913,12 +932,8 @@ extension Agent {
                 segments: toolOutput.segments
             )
 
-            /// Add the response entry to the history.
-            ///
-            /// Doing this before calling the `handleOnResponse` because
-            /// the when `onResponse` is triggered by the system,
-            /// the `history` will contains the last `Transcript.Response`
-            self.history.append(.toolOutput(outputTranscript))
+            /// Not add the output entry to the history yet.
+            /// The output will be added after `afterToolCall` to handle any mutation
 
             return .cancelled(outputTranscript)
         }
@@ -1209,7 +1224,6 @@ extension Agent {
 
         return .finish
     }
-
 
     private func getTool(with name: String)
         -> InvocableTool?

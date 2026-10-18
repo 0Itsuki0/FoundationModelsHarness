@@ -8,11 +8,14 @@
 import FoundationModels
 
 struct AgentProfile: LanguageModelSession.DynamicProfile {
-    let tools: [ToolConfig]
     let instruction: Instructions
 
     @SessionProperty(\.history)
     private var history
+    
+    @SessionProperty(\.tools)
+    private var tools
+
 
     var body: some LanguageModelSession.DynamicProfile {
         Profile {
@@ -43,7 +46,7 @@ extension Transcript.HistoryView {
     }
 }
 
-struct ToolCallsReceived: FakeError {
+struct ToolCallsReceived: Error, Sendable {
     var toolCalls: Transcript.ToolCalls
 }
 

@@ -30,6 +30,7 @@ struct HookOrdered<T: HookEventHandler> {
     }
 }
 
+/// Interface for hook registry operations
 class HookRegistry {
     // MARK: - Before Event
     @HookOrdered

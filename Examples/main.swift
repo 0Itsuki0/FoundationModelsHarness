@@ -62,27 +62,28 @@ func segments(from prompt: PromptRepresentable) async -> [Transcript
 //
 let agent = Agent(
     tools: [
-        .init(tool: GreetingTool(), delegate: false)
+        .init(tool: GreetingTool(), delegate: true)
     ],
     instruction: .init("You are a helpful assistant.")
 )
 
-agent.addHook(
-    AfterToolCallEventHandler(callback: { event in
-        if event.attemptCount < 2 {
-            event.retry = true
-        } else {
-            event.toolResult = .failure(NSError(domain: "failed", code: 1))
-        }
-    })
-)
+//agent.addHook(
+//    AfterToolCallEventHandler(callback: { event in
+//        if event.attemptCount < 2 {
+//            event.retry = true
+//        } else {
+//            event.toolResult = .failure(NSError(domain: "failed", code: 1))
+//        }
+//    })
+//)
 
-agent.agentState["app"] = "Test"
-let result = await agent.respond(
-    to: "hello. greet itsuki",
-    invocationState: ["resume": true]
-)
-print("result", result)
+//agent.agentState["app"] = "Test"
+//let result = await agent.respond(
+//    to: "hello. greet itsuki and dan",
+//    invocationState: ["resume": true]
+//)
+//
+//print("result", result)
 ////print("response: ", response.rawContent as Any)
 //print("-----")
 //await agent.respond(to: "how's going")
@@ -94,10 +95,5 @@ print("result", result)
 //)
 //
 //printHistory(agent.history)
-//await afterToolCallHook(stream: true, example: .mutate)
 
-
-// TODO: -
-// 1. after tool call migration to agent loop
-// 2. plugin
-// 3. implement delegation as plugin
+await toolDelegation(stream: true)

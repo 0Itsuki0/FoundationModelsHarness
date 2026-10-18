@@ -7,6 +7,8 @@
 
 import Foundation
 
+/// Hooks enables developer to add logging, validation, guardrails, or custom logic at any point in the agent loop.
+///
 /// Lifecycle events: Before/After pairs that bracket agent operations
 /// - If a *before* event is called, the *after* event is guaranteed to be called.
 /// - *after* events use reverse callback ordering for proper cleanup semantics.
