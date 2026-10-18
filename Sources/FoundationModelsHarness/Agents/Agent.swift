@@ -1293,21 +1293,10 @@ extension LanguageModelSession {
 }
 
 extension Error {
-    var isRetryError: Bool {
-        return self.isError(RetryModelGenerationError.self)
-    }
-
-    var retryError: RetryModelGenerationError? {
-        return self.error(RetryModelGenerationError.self)
-    }
 
     var toolCallsReceived: ToolCallsReceived? {
         return self.error(ToolCallsReceived.self)
     }
-
-    //    var responseFinishError: ResponseFinishedError? {
-    //        return self.error(ResponseFinishedError.self)
-    //    }
 
     func isError<T: Error>(_ type: T.Type) -> Bool {
         return self.error(type) != nil

@@ -126,17 +126,4 @@ extension Array where Element == Transcript.Segment {
         return (try? GeneratedContent(json: self.rawContent))
             ?? GeneratedContent(kind: .string(self.rawContent))
     }
-
-    //    var isStrictEmpty: Bool {
-    //        if self.isEmpty {
-    //            return true
-    //        }
-    //        if self.contains(where: { $0.isAttachment }) {
-    //            return false
-    //        }
-    //
-    //        return self.rawContent.trimmingCharacters(
-    //            in: .whitespacesAndNewlines
-    //        ).isEmpty
-    //    }
 }
