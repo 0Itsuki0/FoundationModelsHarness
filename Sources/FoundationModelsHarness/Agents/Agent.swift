@@ -507,20 +507,11 @@ public final class Agent: Sendable {
                 after: session.usage
             )
 
-            switch modelStopData.stopReason {
+            let stopReason: AgentStopReason
 
+            switch modelStopData.stopReason {
             case .endTurn(let response):
-                return AgentResult(
-                    response: response,
-                    invocationState: invocationState,
-                    usage: usage
-                )
-            case .refusal(let error):
-                return AgentResult(
-                    error: error,
-                    invocationState: invocationState,
-                    usage: usage
-                )
+                stopReason = .endTurn(response)
             case .toolUse(let toolCall):
                 let results = await self.callTools(
                     toolCall,
@@ -559,16 +550,48 @@ public final class Agent: Sendable {
                         streamingInto: continuation
                     )
 
+                    continue
                 case .endTurn(let response):
-                    return AgentResult(
-                        response: response,
-                        invocationState: invocationState,
-                        usage: usage
-                    )
+                    stopReason = .endTurn(response)
                 }
 
-                continue
+            case .contextSizeExceeded(let contextSizeExceeded):
+                stopReason = .contextSizeExceeded(contextSizeExceeded)
+            case .rateLimited(let rateLimited):
+                stopReason = .rateLimited(rateLimited)
+            case .guardrailViolation(let guardrailViolation):
+                stopReason = .guardrailViolation(guardrailViolation)
+            case .refusal(let refusal):
+                stopReason = .refusal(refusal)
+            case .unsupportedCapability(let unsupportedCapability):
+                stopReason = .unsupportedCapability(unsupportedCapability)
+            case .unsupportedTranscriptContent(let unsupportedTranscriptContent):
+                stopReason = .unsupportedTranscriptContent(
+                    unsupportedTranscriptContent
+                )
+            case .unsupportedGenerationGuide(let unsupportedGenerationGuide):
+                stopReason = .unsupportedGenerationGuide(
+                    unsupportedGenerationGuide
+                )
+            case .unsupportedLanguageOrLocale(let unsupportedLanguageOrLocale):
+                stopReason = .unsupportedLanguageOrLocale(
+                    unsupportedLanguageOrLocale
+                )
+            case .timeout(let timeout):
+                stopReason = .timeout(timeout)
+            case .concurrentRequests:
+                stopReason = .concurrentRequests
+            case .transcriptMutationWhileResponding:
+                stopReason = .transcriptMutationWhileResponding
+            case .generalFailure(let error):
+                stopReason = .generalFailure(error)
             }
+
+            return AgentResult(
+                stopReason: stopReason,
+                invocationState: invocationState,
+                usage: usage
+            )
         }
     }
 
@@ -797,32 +820,15 @@ public final class Agent: Sendable {
         invocationState: InvocationState? = nil,
         toolExecutionMode: ToolExecutionMode? = nil,
     ) -> AsyncStream<AgentStreamEvent> {
-        let resolvedOptions = buildInvocationOptions(
-            schema: schema,
-            options: options,
-            metadata: metadata,
-            contextOptions: contextOptions,
-            invocationState: invocationState,
-            toolExecutionMode: toolExecutionMode
-        )
 
-        let schema = resolvedOptions.schema
-        let options = resolvedOptions.options
-        let metadata = resolvedOptions.metadata
-        let contextOptions = resolvedOptions.contextOptions
-        let invocationState = resolvedOptions.invocationState
-        let toolExecutionMode = resolvedOptions.toolExecutionMode
-
-        self.resetInvocationState()
-        self.invocationState = invocationState
+        /// Required to convert ConvertibleToGeneratedContent to GeneratedContent to avoid the following concurrency error:
+        /// Passing closure as a 'sending' parameter risks causing data races between code in the current isolation context and concurrent execution of the closure
+        let metadata = metadata?.mapValues(\.generatedContent)
 
         /// Important:
         /// This function is the **only** place to call `continuation.finish` to ensure the `afterInvocation` is handled correctly.
         /// **Never** call `continuation.finish` on child functions
         return AsyncStream<AgentStreamEvent> { continuation in
-            // Required to convert ConvertibleToGeneratedContent to GeneratedContent to avoid the following concurrency error:
-            // Passing closure as a 'sending' parameter risks causing data races between code in the current isolation context and concurrent execution of the closure
-            let metadata = metadata.mapValues(\.generatedContent)
 
             Task {
                 [
@@ -1090,7 +1096,7 @@ extension Agent {
         _ toolCall: Transcript.ToolCall,
         allCalls: Transcript.ToolCalls
     ) async -> BeforeToolCallEventHandler.CallbackHandlingResult {
-        print(#function)
+
         let handlers = hookRegistry.beforeToolCallHandlers
         var event = BeforeToolCallEventHandler.EventPayload(
             toolCall: toolCall,
@@ -1124,7 +1130,6 @@ extension Agent {
     private func afterToolCall(result: ToolCallResult, currentAttempt: Int)
         async -> AfterToolCallEventHandler.CallbackHandlingResult
     {
-        print(#function)
 
         let handlers = hookRegistry.afterToolCallHandlers
         var event = AfterToolCallEventHandler.EventPayload(
@@ -1149,7 +1154,6 @@ extension Agent {
     private func beforeTools(toolCalls: Transcript.ToolCalls) async
         -> BeforeToolsEventHandler.CallbackHandlingResult
     {
-        print(#function)
 
         let handlers = hookRegistry.beforeToolsHandlers
         var event = BeforeToolsEventHandler.EventPayload(
@@ -1197,7 +1201,6 @@ extension Agent {
     private func afterTools(toolCallResults: [ToolCallResult]) async
         -> AfterToolsEventHandler.CallbackHandlingResult
     {
-        print(#function)
 
         let handlers = hookRegistry.afterToolsHandlers
         var event = AfterToolsEventHandler.EventPayload(
@@ -1248,7 +1251,6 @@ extension Agent {
     private func beforeInvocation(prompt: Transcript.Prompt) async
         -> BeforeInvocationEventHandler.CallbackHandlingResult
     {
-        print(#function)
 
         /// history will *not* contain the prompt as its last entry
         let handlers = hookRegistry.beforeInvocationHandlers
@@ -1288,7 +1290,6 @@ extension Agent {
     private func beforeModelCall() async
         -> BeforeModelCallEventHandler.CallbackHandlingResult
     {
-        print(#function)
 
         let handlers = hookRegistry.beforeModelCallHandlers
         var event = BeforeModelCallEventHandler.EventPayload(
@@ -1325,7 +1326,6 @@ extension Agent {
     private func afterModelCall(stopData: ModelStopData, currentAttempt: Int)
         async -> AfterModelCallEventHandler.CallbackHandlingResult
     {
-        print(#function)
 
         /// remove the last entry from the history
         var lastEntryId: Transcript.Entry.ID? = nil
@@ -1378,7 +1378,7 @@ extension Agent {
     ) async
         -> AfterInvocationEventHandler.CallbackHandlingResult
     {
-        print(#function)
+
         /// history will *not* contain the prompt as its last entry
         let handlers = hookRegistry.afterInvocationHandlers
         var event = AfterInvocationEventHandler.EventPayload(

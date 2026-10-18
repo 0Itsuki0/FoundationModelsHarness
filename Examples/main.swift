@@ -96,4 +96,4 @@ let agent = Agent(
 //
 //printHistory(agent.history)
 
-await toolDelegation(stream: true)
+await afterToolsHook()
