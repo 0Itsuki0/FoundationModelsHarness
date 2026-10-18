@@ -8,14 +8,17 @@
 import FoundationModels
 
 struct AgentProfile: LanguageModelSession.DynamicProfile {
-    let instruction: Instructions
-
     @SessionProperty(\.history)
     private var history
-    
+
     @SessionProperty(\.tools)
     private var tools
 
+    @SessionProperty(\.model)
+    private var model
+
+    @SessionProperty(\.instruction)
+    private var instruction
 
     var body: some LanguageModelSession.DynamicProfile {
         Profile {
@@ -26,6 +29,7 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
             /// any read on the`SessionProperties` within the actual `tool` will return their default value, as they are not attached to any sessions.
             tools.map(\.tool)
         }
+        .model(model)
         /// `transcriptErrorHandlingPolicy` needs to be set to `preserveTranscript`.
         /// Otherwise, when we throw a FakeError, the previous request from the user will also be lost.
         .transcriptErrorHandlingPolicy(.preserveTranscript)

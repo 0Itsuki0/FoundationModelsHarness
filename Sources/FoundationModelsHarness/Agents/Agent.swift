@@ -8,6 +8,7 @@
 import FoundationModels
 import SwiftUI
 
+/// Public `SessionPropertyValues` for possible access from the tools
 extension SessionPropertyValues {
     /// Agent state accessible to tools and application logic.
     /// Lives outside the conversation context and persists across requests
@@ -20,29 +21,78 @@ extension SessionPropertyValues {
     @SessionPropertyEntry
     public var invocationState: InvocationState = [:]
 
+}
+
+/// Package `SessionPropertyValues`
+///
+/// Using `SessionPropertyValues` instead of storing directly because `Agent` cannot store mutable or non-sendable values
+extension SessionPropertyValues {
+    /// Tools registered to the agent.
+    @SessionPropertyEntry
+    public var tools: [ToolConfig] = []
+
+    /// Default invocation options that will be used when building respond / streamResponse request.
+    @SessionPropertyEntry
+    public var defaultInvocationOptions: InvocationOptions = InvocationOptions()
+
+    /// Instruction used by the model
+    @SessionPropertyEntry
+    public var instruction: Instructions = Instructions {}
+
+    /// Current model used by the agent.
+    @SessionPropertyEntry
+    public var model: any LanguageModel = SystemLanguageModel()
+
     @SessionPropertyEntry
     var hookRegistry: HookRegistry = .init()
 
     @SessionPropertyEntry
     var pluginRegistry: PluginRegistry = .init()
-
-    @SessionPropertyEntry
-    var tools: [ToolConfig] = []
 }
 
 public typealias InvocationState = [String: JSONValue]
 public typealias AgentState = [String: JSONValue]
 
-// TODO: - add invocation options in and add a default invocation option on Agent `init`.
-public struct InvocationOptions: Sendable {}
+public struct InvocationOptions: Sendable {
+    public var schema: GenerationSchema
+    public var options: GenerationOptions
+    public var metadata: [String: GeneratedContent]
+    public var contextOptions: ContextOptions
+    public var invocationState: InvocationState
+    public var toolExecutionMode: ToolExecutionMode
 
-//extension Agent {
-//    public subscript<T>(dynamicMember keyPath: KeyPath<LanguageModelSession, T>)
-//        -> T
-//    {
-//        return self.session[keyPath: keyPath]
-//    }
-//}
+    public init(
+        schema: GenerationSchema = String.self.generationSchema,
+        options: GenerationOptions = GenerationOptions(),
+        metadata: [String: any ConvertibleToGeneratedContent] = [:],
+        contextOptions: ContextOptions = ContextOptions(),
+        invocationState: InvocationState = [:],
+        toolExecutionMode: ToolExecutionMode = .parallel
+    ) {
+        self.schema = schema
+        self.options = options
+        self.metadata = metadata.mapValues({ $0.generatedContent })
+        self.contextOptions = contextOptions
+        self.invocationState = invocationState
+        self.toolExecutionMode = toolExecutionMode
+    }
+
+    public init<Content: Generable>(
+        generating type: Content.Type = String.self,
+        options: GenerationOptions = GenerationOptions(),
+        metadata: [String: any ConvertibleToGeneratedContent] = [:],
+        contextOptions: ContextOptions = ContextOptions(),
+        invocationState: InvocationState = [:],
+        toolExecutionMode: ToolExecutionMode = .parallel
+    ) {
+        self.schema = Content.generationSchema
+        self.options = options
+        self.metadata = metadata.mapValues({ $0.generatedContent })
+        self.contextOptions = contextOptions
+        self.invocationState = invocationState
+        self.toolExecutionMode = toolExecutionMode
+    }
+}
 
 extension Transcript.Prompt {
     static let dummyPrompt = Transcript.Prompt(
@@ -51,7 +101,6 @@ extension Transcript.Prompt {
     )
 }
 
-//@dynamicMemberLookup
 @Observable
 public final class Agent: Sendable {
 
@@ -66,12 +115,56 @@ public final class Agent: Sendable {
         }
     }
 
+    /// Current model used by the agent.
+    public var model: any LanguageModel {
+        get {
+            session.properties.model
+        }
+        set {
+            session.properties.model = newValue
+        }
+    }
+
+    /// Instruction used by the model
+    public var instruction: Instructions {
+        get {
+            session.properties.instruction
+        }
+        set {
+            let new = ToolDelegationPlugin.injectDelegationPrompt(
+                for: tools,
+                on: newValue
+            )
+            session.properties.instruction = new
+        }
+    }
+
+    /// Default invocation options that will be used when building respond / streamResponse request.
+    public var defaultInvocationOptions: InvocationOptions {
+        get {
+            session.properties.defaultInvocationOptions
+        }
+        set {
+            session.properties.defaultInvocationOptions = newValue
+        }
+    }
+
     public private(set) var history: Transcript.HistoryView {
         get {
             session.transcript.history
         }
         set {
             session.transcript.history = newValue
+        }
+    }
+
+    /// Tools registered to the agent.
+    public private(set) var tools: [ToolConfig] {
+        get {
+            session.properties.tools
+        }
+        set {
+            session.properties.tools = newValue
         }
     }
 
@@ -94,15 +187,6 @@ public final class Agent: Sendable {
         session.properties.pluginRegistry
     }
 
-    private var tools: [ToolConfig] {
-        get {
-            session.properties.tools
-        }
-        set {
-            session.properties.tools = newValue
-        }
-    }
-
     private var delegatedToolName: [String] {
         self.tools.filter({ $0.delegate }).map(\.invocableTool.name)
     }
@@ -111,15 +195,33 @@ public final class Agent: Sendable {
         self.delegatedToolName.contains(toolName)
     }
 
-    public init(tools: [ToolConfig], instruction: Instructions) {
+    
+    /// Create an agent with configurations.
+    ///
+    /// - Parameters:
+    ///  - model: model used by the agent. Gettable/Settable using `Agent.model`.
+    ///  - tools: tools to added to the agent. Gettable using `Agent.tools`, settable using `addTool`/`removeTool`.
+    ///  - instruction: Instruction used by the model. Gettable/Settable using `Agent.instruction`.
+    ///  - defaultInvocationOptions: Default invocation options that will be used when building respond / streamResponse request. Gettable/Settable using `Agent.defaultInvocationOptions`.
+    ///  - history: Existing transcript entries *without* the initial instructions.
+    public init(
+        model: any LanguageModel = SystemLanguageModel(),
+        tools: [ToolConfig] = [],
+        instruction: Instructions = Instructions {},
+        defaultInvocationOptions: InvocationOptions = InvocationOptions(),
+        history: [Transcript.Entry] = []
+    ) {
         let instruction = ToolDelegationPlugin.injectDelegationPrompt(
             for: tools,
             on: instruction
         )
-        let profile = AgentProfile(instruction: instruction)
-        let session = LanguageModelSession(profile: profile)
+        let profile = AgentProfile()
+        let session = LanguageModelSession(profile: profile, history: history)
         self.session = session
         self.tools = tools
+        self.instruction = instruction
+        self.model = model
+        self.defaultInvocationOptions = defaultInvocationOptions
         self.setupBuiltInHooks()
     }
 
@@ -171,21 +273,24 @@ public final class Agent: Sendable {
     /// Produces a generated content type as a response to a prompt and schema.
     ///
     /// - Parameters:
+    ///   - prompt: A prompt for the model to respond to.
     ///   - metadata: Metadata provided as part of this prompt.
     ///   - options: Options that control how tokens are sampled from the distribution the model produces.
     ///   - responseFormat: A response format that describes the output structure.
     ///   - contextOptions: Settings that configure how the model is prompted.
     ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
     ///   - toolExecutionMode: Strategy for executing tool calls that the model emits in a single assistant turn.
+    ///
+    /// Passing nil for parameters other than `prompt` to use the `defaultInvocationOptions`.
     @discardableResult
     public func respond(
         to prompt: String,
         schema: GenerationSchema? = nil,
-        options: GenerationOptions = GenerationOptions(),
-        metadata: [String: any ConvertibleToGeneratedContent] = [:],
-        contextOptions: ContextOptions = ContextOptions(),
-        invocationState: InvocationState = [:],
-        toolExecutionMode: ToolExecutionMode = .parallel
+        options: GenerationOptions? = nil,
+        metadata: [String: any ConvertibleToGeneratedContent]? = nil,
+        contextOptions: ContextOptions? = nil,
+        invocationState: InvocationState? = nil,
+        toolExecutionMode: ToolExecutionMode? = nil,
     ) async -> AgentResult {
         return await self.respond(
             to: Prompt(prompt),
@@ -201,20 +306,24 @@ public final class Agent: Sendable {
     /// Produces a generated content type as a response to a prompt and schema.
     ///
     /// - Parameters:
+    ///   - prompt: A prompt for the model to respond to.
     ///   - metadata: Metadata provided as part of this prompt.
     ///   - options: Options that control how tokens are sampled from the distribution the model produces.
     ///   - responseFormat: A response format that describes the output structure.
     ///   - contextOptions: Settings that configure how the model is prompted.
     ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
+    ///   - toolExecutionMode: Strategy for executing tool calls that the model emits in a single assistant turn.
+    ///
+    /// Passing nil for parameters other than `prompt` to use the `defaultInvocationOptions`.
     @discardableResult
     public func respond(
         to prompt: Prompt,
         schema: GenerationSchema? = nil,
-        options: GenerationOptions = GenerationOptions(),
-        metadata: [String: any ConvertibleToGeneratedContent] = [:],
-        contextOptions: ContextOptions = ContextOptions(),
-        invocationState: InvocationState = [:],
-        toolExecutionMode: ToolExecutionMode = .parallel
+        options: GenerationOptions? = nil,
+        metadata: [String: any ConvertibleToGeneratedContent]? = nil,
+        contextOptions: ContextOptions? = nil,
+        invocationState: InvocationState? = nil,
+        toolExecutionMode: ToolExecutionMode? = nil,
     ) async -> AgentResult {
         return await runInvocation(
             on: Prompt(prompt),
@@ -230,21 +339,58 @@ public final class Agent: Sendable {
         )
     }
 
+    private func buildInvocationOptions(
+        schema: GenerationSchema? = nil,
+        options: GenerationOptions? = nil,
+        metadata: [String: any ConvertibleToGeneratedContent]? = nil,
+        contextOptions: ContextOptions? = nil,
+        invocationState: InvocationState? = nil,
+        toolExecutionMode: ToolExecutionMode? = nil,
+    ) -> InvocationOptions {
+        return InvocationOptions(
+            schema: schema ?? defaultInvocationOptions.schema,
+            options: options ?? defaultInvocationOptions.options,
+            metadata: metadata ?? defaultInvocationOptions.metadata,
+            contextOptions: contextOptions
+                ?? defaultInvocationOptions.contextOptions,
+            invocationState: invocationState
+                ?? defaultInvocationOptions.invocationState,
+            toolExecutionMode: toolExecutionMode
+                ?? defaultInvocationOptions.toolExecutionMode
+        )
+    }
+
     /// One-Invocation wrapper.
     @discardableResult
     private func runInvocation(
         on prompt: Prompt,
         schema: GenerationSchema? = nil,
-        options: GenerationOptions = GenerationOptions(),
-        metadata: [String: any ConvertibleToGeneratedContent] = [:],
-        contextOptions: ContextOptions = ContextOptions(),
-        invocationState: InvocationState = [:],
-        toolExecutionMode: ToolExecutionMode,
+        options: GenerationOptions? = nil,
+        metadata: [String: any ConvertibleToGeneratedContent]? = nil,
+        contextOptions: ContextOptions? = nil,
+        invocationState: InvocationState? = nil,
+        toolExecutionMode: ToolExecutionMode? = nil,
         currentAttempt: Int,
         session: LanguageModelSession,
         streamingInto continuation: AsyncStream<AgentStreamEvent>
             .Continuation?
     ) async -> AgentResult {
+        let resolvedOptions = buildInvocationOptions(
+            schema: schema,
+            options: options,
+            metadata: metadata,
+            contextOptions: contextOptions,
+            invocationState: invocationState,
+            toolExecutionMode: toolExecutionMode
+        )
+
+        let schema = resolvedOptions.schema
+        let options = resolvedOptions.options
+        let metadata = resolvedOptions.metadata
+        let contextOptions = resolvedOptions.contextOptions
+        let invocationState = resolvedOptions.invocationState
+        let toolExecutionMode = resolvedOptions.toolExecutionMode
+
         self.resetInvocationState()
         self.invocationState = invocationState
 
@@ -252,9 +398,7 @@ public final class Agent: Sendable {
             metadata: metadata,
             segments: SegmentBuilder.segments(from: prompt),
             options: options,
-            responseFormat: schema.map {
-                Transcript.ResponseFormat(schema: $0)
-            },
+            responseFormat: Transcript.ResponseFormat(schema: schema),
             contextOptions: contextOptions
         )
 
@@ -506,14 +650,6 @@ public final class Agent: Sendable {
                     before: beforeCallUsage,
                     after: session.usage
                 )
-
-                //                if let error = error.responseFinishError {
-                //                    modelStopData = ModelStopData(
-                //                        response: error.response,
-                //                        invocationState: invocationState,
-                //                        usage: usage
-                //                    )
-                //                } else
                 if let error = error.toolCallsReceived {
                     modelStopData = ModelStopData(
                         toolCalls: error.toolCalls,
@@ -605,14 +741,26 @@ public final class Agent: Sendable {
         [InternalMetadataKey.dummyPrompt: true]
     }
 
+    /// Produces a response stream to a prompt.
+    ///
+    /// - Parameters:
+    ///   - prompt: A prompt for the model to respond to.
+    ///   - metadata: Metadata provided as part of this prompt.
+    ///   - options: Options that control how tokens are sampled from the distribution the model produces.
+    ///   - responseFormat: A response format that describes the output structure.
+    ///   - contextOptions: Settings that configure how the model is prompted.
+    ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
+    ///   - toolExecutionMode: Strategy for executing tool calls that the model emits in a single assistant turn.
+    ///
+    /// Passing nil for parameters other than `prompt` to use the `defaultInvocationOptions`.
     public func streamResponse(
         to prompt: String,
         schema: GenerationSchema? = nil,
-        options: GenerationOptions = GenerationOptions(),
-        metadata: [String: any ConvertibleToGeneratedContent] = [:],
-        contextOptions: ContextOptions = ContextOptions(),
-        invocationState: InvocationState = [:],
-        toolExecutionMode: ToolExecutionMode = .parallel
+        options: GenerationOptions? = nil,
+        metadata: [String: any ConvertibleToGeneratedContent]? = nil,
+        contextOptions: ContextOptions? = nil,
+        invocationState: InvocationState? = nil,
+        toolExecutionMode: ToolExecutionMode? = nil,
     ) -> AsyncStream<AgentStreamEvent> {
         return self.streamResponse(
             to: Prompt(prompt),
@@ -625,15 +773,43 @@ public final class Agent: Sendable {
         )
     }
 
+    /// Produces a response stream to a prompt.
+    ///
+    /// - Parameters:
+    ///   - prompt: A prompt for the model to respond to.
+    ///   - metadata: Metadata provided as part of this prompt.
+    ///   - options: Options that control how tokens are sampled from the distribution the model produces.
+    ///   - responseFormat: A response format that describes the output structure.
+    ///   - contextOptions: Settings that configure how the model is prompted.
+    ///   - invocationState: Per-invocation state. Passed to lifecycle hook events and tools, and returned on `AgentResult.invocationState`. Mutable — hooks and tools may read and write
+    ///   - toolExecutionMode: Strategy for executing tool calls that the model emits in a single assistant turn.
+    ///
+    /// Passing nil for parameters other than `prompt` to use the `defaultInvocationOptions`.
     public func streamResponse(
         to prompt: Prompt,
         schema: GenerationSchema? = nil,
-        options: GenerationOptions = GenerationOptions(),
-        metadata: [String: any ConvertibleToGeneratedContent] = [:],
-        contextOptions: ContextOptions = ContextOptions(),
-        invocationState: InvocationState = [:],
-        toolExecutionMode: ToolExecutionMode = .parallel
+        options: GenerationOptions? = nil,
+        metadata: [String: any ConvertibleToGeneratedContent]? = nil,
+        contextOptions: ContextOptions? = nil,
+        invocationState: InvocationState? = nil,
+        toolExecutionMode: ToolExecutionMode? = nil,
     ) -> AsyncStream<AgentStreamEvent> {
+        let resolvedOptions = buildInvocationOptions(
+            schema: schema,
+            options: options,
+            metadata: metadata,
+            contextOptions: contextOptions,
+            invocationState: invocationState,
+            toolExecutionMode: toolExecutionMode
+        )
+
+        let schema = resolvedOptions.schema
+        let options = resolvedOptions.options
+        let metadata = resolvedOptions.metadata
+        let contextOptions = resolvedOptions.contextOptions
+        let invocationState = resolvedOptions.invocationState
+        let toolExecutionMode = resolvedOptions.toolExecutionMode
+
         self.resetInvocationState()
         self.invocationState = invocationState
 
