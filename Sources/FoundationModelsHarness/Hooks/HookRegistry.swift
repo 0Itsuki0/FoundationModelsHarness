@@ -30,7 +30,7 @@ struct HookOrdered<T: HookEventHandler> {
     }
 }
 
-struct HookRegistry {
+class HookRegistry {
     // MARK: - Before Event
     @HookOrdered
     private(set) var beforeInvocationHandlers: [BeforeInvocationEventHandler]
@@ -57,11 +57,6 @@ struct HookRegistry {
     @HookOrdered
     private(set) var afterInvocationHandlers: [AfterInvocationEventHandler]
 
-    //
-    //
-    //    @HookOrdered
-    //    private(set) var afterInvocationHandlers: [AfterToolCallEventHandler]
-
     init(
         beforeInvocationHandlers: [BeforeInvocationEventHandler] = [],
         beforeModelCallHandlers: [BeforeModelCallEventHandler] = [],
@@ -84,7 +79,7 @@ struct HookRegistry {
     }
 
     @discardableResult
-    mutating func addHook(_ hook: any HookEventHandler) -> HookID {
+    func addHook(_ hook: any HookEventHandler) -> HookID {
         self.removeHook(hook.id)
 
         if let hook = hook as? BeforeInvocationEventHandler {
@@ -122,7 +117,7 @@ struct HookRegistry {
         return hook.id
     }
 
-    mutating func removeHook(_ id: HookID) {
+    func removeHook(_ id: HookID) {
         self.beforeInvocationHandlers.remove(id)
         self.beforeModelCallHandlers.remove(id)
         self.beforeToolsHandlers.remove(id)
@@ -134,7 +129,7 @@ struct HookRegistry {
         self.afterInvocationHandlers.remove(id)
     }
 
-    mutating func removeHooks(for types: Set<HookEventType>) {
+    func removeHooks(for types: Set<HookEventType>) {
         for type in types {
             switch type {
             case .beforeInvocation:
@@ -158,8 +153,8 @@ struct HookRegistry {
         }
     }
 
-    mutating func removeAllHooks() {
-        self = HookRegistry()
+    func removeAllHooks() {
+        self.removeHooks(for: Set(HookEventType.allCases))
     }
 }
 

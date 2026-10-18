@@ -20,7 +20,7 @@ public struct AfterInvocationEventHandler: HookEventHandler {
 
     public let id = HookID()
 
-    public struct EventPayload: Sendable {
+    public struct EventPayload {
         /// The result of the agent invocation.
         public let result: AgentResult
 
@@ -47,7 +47,7 @@ public struct AfterInvocationEventHandler: HookEventHandler {
         /// previous turn). The agent loop guarantees this marker on every fresh turn.
         public let attemptCount: Int
 
-        /// Set to a non-nil value to re-invoke the agent. 
+        /// Set to a non-nil value to re-invoke the agent.
         /// The value set here will be used as the model  input.
         ///
         /// Read/write. Last-wins.
@@ -57,11 +57,13 @@ public struct AfterInvocationEventHandler: HookEventHandler {
 
     }
 
-    public let callback: @Sendable (inout EventPayload) async -> Void
+    public let callback:
+        nonisolated(nonsending) (inout EventPayload) async -> Void
     public let options: HookCallbackOptions?
 
     public init(
-        callback: @escaping @Sendable (inout EventPayload) async -> Void,
+        callback:
+            nonisolated(nonsending) @escaping (inout EventPayload) async -> Void,
         options: HookCallbackOptions? = nil
     ) {
         self.callback = callback

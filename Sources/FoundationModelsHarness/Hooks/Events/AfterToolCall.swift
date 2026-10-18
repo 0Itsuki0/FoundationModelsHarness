@@ -17,7 +17,7 @@ public struct AfterToolCallEventHandler: HookEventHandler {
 
     public let id = HookID()
 
-    public struct EventPayload: Sendable {
+    public struct EventPayload {
         /// The tool call that triggers the output.
         public let toolCall: Transcript.ToolCall
 
@@ -54,11 +54,13 @@ public struct AfterToolCallEventHandler: HookEventHandler {
         public let attemptCount: Int
     }
 
-    public let callback: @Sendable (inout EventPayload) async -> Void
+    public let callback:
+        nonisolated(nonsending) (inout EventPayload) async -> Void
     public let options: HookCallbackOptions?
 
     public init(
-        callback: @escaping @Sendable (inout EventPayload) async -> Void,
+        callback:
+            nonisolated(nonsending) @escaping (inout EventPayload) async -> Void,
         options: HookCallbackOptions? = nil
     ) {
         self.callback = callback

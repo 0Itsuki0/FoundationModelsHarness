@@ -19,7 +19,7 @@ public struct BeforeToolsEventHandler: HookEventHandler {
 
     public let id = HookID()
 
-    public struct EventPayload: Sendable {
+    public struct EventPayload {
         /// The tool calls that triggers the event.
         public let toolCalls: [Transcript.ToolCall]
 
@@ -40,11 +40,11 @@ public struct BeforeToolsEventHandler: HookEventHandler {
         public var cancel: JSONValue? = nil
     }
 
-    public let callback: @Sendable (inout EventPayload) async -> Void
+    public let callback:nonisolated(nonsending) (inout EventPayload) async -> Void
     public let options: HookCallbackOptions?
 
     public init(
-        callback: @escaping @Sendable (inout EventPayload) async -> Void,
+        callback: nonisolated(nonsending) @escaping (inout EventPayload) async -> Void,
         options: HookCallbackOptions? = nil
     ) {
         self.callback = callback

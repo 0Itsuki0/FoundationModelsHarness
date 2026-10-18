@@ -18,7 +18,7 @@ public struct BeforeInvocationEventHandler: HookEventHandler {
 
     public let id = HookID()
 
-    public struct EventPayload: Sendable {
+    public struct EventPayload {
         /// The prompt to be sent to the model.
         ///
         /// Read/write. Last-wins.
@@ -44,11 +44,11 @@ public struct BeforeInvocationEventHandler: HookEventHandler {
         public var cancel: JSONValue? = nil
     }
 
-    public let callback: @Sendable (inout EventPayload) async -> Void
+    public let callback:nonisolated(nonsending) (inout EventPayload) async -> Void
     public let options: HookCallbackOptions?
 
     public init(
-        callback: @escaping @Sendable (inout EventPayload) async -> Void,
+        callback: nonisolated(nonsending) @escaping (inout EventPayload) async -> Void,
         options: HookCallbackOptions? = nil
     ) {
         self.callback = callback

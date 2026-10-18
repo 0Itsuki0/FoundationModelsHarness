@@ -9,13 +9,15 @@ import Foundation
 
 public typealias HookID = UUID
 
-public protocol HookEventHandler: Sendable, Identifiable where ID == HookID {
+public protocol HookEventHandler: Identifiable where ID == HookID {
     static var eventType: HookEventType { get }
     static var useReverseOrder: Bool { get }
 
-    associatedtype EventPayload: Sendable
+    associatedtype EventPayload
 
-    var callback: @Sendable (inout EventPayload) async -> Void { get }
+    var callback: nonisolated(nonsending) (inout EventPayload) async -> Void {
+        get
+    }
 
     var options: HookCallbackOptions? { get }
 

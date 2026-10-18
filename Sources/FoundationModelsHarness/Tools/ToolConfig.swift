@@ -22,7 +22,7 @@ public struct ToolConfig: Sendable {
     /// **IMPORTANT**:
     /// This is the one that is attached to the session  because if we have attached `invocableTool` to the session,
     /// any read on the`SessionProperties` within the actual `tool` will return their default value, as they are not attached to any sessions.
-    let tool: any Tool
+    public let tool: any Tool
 
     /// When a tool is configured with `delegate: true`, this package ensures:
     /// 1. The agent loop exits immediately after a successful delegation (via endTurn)
@@ -33,7 +33,7 @@ public struct ToolConfig: Sendable {
     /// NOTE:
     /// If a  delegated tool output a result,
     /// the `AfterInvocation` hook will not be triggered (as there is no model called for the final response).
-    let delegate: Bool
+    public let delegate: Bool
 
     /// - `tool`: the tool being added to the session
     /// - `delegate`: whether to configured the tool as a delegated tool.
