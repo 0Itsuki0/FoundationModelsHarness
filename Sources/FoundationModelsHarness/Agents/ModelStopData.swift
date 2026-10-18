@@ -34,6 +34,16 @@ public struct ModelStopData: Sendable {
     }
 
     init(
+        stopReason: ModelStopReason,
+        invocationState: InvocationState,
+        usage: LanguageModelSession.Usage
+    ) {
+        self.stopReason = stopReason
+        self.invocationState = invocationState
+        self.usage = usage
+    }
+
+    init(
         response: Transcript.Response,
         invocationState: InvocationState,
         usage: LanguageModelSession.Usage

@@ -29,10 +29,10 @@ public enum HookEventType: Sendable, Hashable, Equatable, CaseIterable {
     /// Triggered after tool invocation completes. Uses reverse callback ordering.
     case afterToolCall
 
-    /// Triggered after all tools complete execution
+    /// Triggered after all tools complete execution. Uses reverse callback ordering.
     case afterTools
 
-    /// Triggered after the model invocation completes
+    /// Triggered after the model invocation completes. Uses reverse callback ordering.
     case afterModelCall
 
     /// Triggered at the end of an agent request. Uses reverse callback ordering.

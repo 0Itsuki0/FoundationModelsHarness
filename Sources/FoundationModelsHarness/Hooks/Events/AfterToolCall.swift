@@ -7,6 +7,11 @@
 
 import FoundationModels
 
+/// Event triggered after a tool execution completes.
+/// Fired after tool execution finishes, whether successful or failed.
+/// Uses reverse callback ordering for proper cleanup semantics.
+///
+/// Hook callbacks can mutate `toolResult` to rewrite the tool result before it propagates to the model (e.g. to redact or truncate output).
 public struct AfterToolCallEventHandler: HookEventHandler {
     static public let eventType: HookEventType = .afterToolCall
 
@@ -21,7 +26,8 @@ public struct AfterToolCallEventHandler: HookEventHandler {
         /// Read/write. Last-wins.
         ///
         /// Can be mutated / replaced by hook callbacks to transform the result before it enters the conversation history.
-        /// Failure is the error thrown by the `Tool.call(arguments:)`. If not modified to a success, the error will be penetrated directly up to agent result as `toolCallError`
+        /// Failure is the error thrown by the `Tool.call(arguments:)`.
+        /// Any error here will be penetrated directly up to agent result as `toolCallError`.
         ///
         /// Changes in the `Transcript.ToolOutput`'s `id` and `toolName` will be ignored as those will need to be paired up with the `toolCall`
         public var toolResult: Result<Transcript.ToolOutput, Error>

@@ -10,6 +10,8 @@ import FoundationModels
 /// Event triggered after the model invocation completes
 /// Fired after the model finishes generating a response, whether successful or failed.
 /// Uses reverse callback ordering for proper cleanup semantics.
+///
+/// Hook callbacks can mutate `stopReason` to rewrite the model output before it enters the conversation history.
 public struct AfterModelCallEventHandler: HookEventHandler {
     static public let eventType: HookEventType = .afterModelCall
 
@@ -30,7 +32,7 @@ public struct AfterModelCallEventHandler: HookEventHandler {
         ///
         /// - `agentState`: Agent state persists across requests. Read/write.
         /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
-        /// - `history`: The transcript entries excluding the leading instructions entry, if present, including the last response if not errored.
+        /// - `history`: The transcript entries excluding the leading instructions entry, if present, up to **not including** the last response.
         public let agent: AgentSnapshot
 
         /// Boolean flag that can be set by hook callbacks to request a retry of the tool call.

@@ -78,10 +78,10 @@ agent.addHook(
 )
 
 //agent.agentState["app"] = "Test"
-let result = await agent.respond(
-    to: "hello. greet itsuki",
-    invocationState: ["resume": true]
-)
+//let result = await agent.respond(
+//    to: "hello. greet itsuki",
+//    invocationState: ["resume": true]
+//)
 //print("result", result)
 ////print("response: ", response.rawContent as Any)
 //print("-----")
@@ -94,7 +94,7 @@ let result = await agent.respond(
 //)
 //
 //printHistory(agent.history)
-//await beforeToolCallHook(stream: true, example: .cancellation)
+await afterToolCallHook(stream: true, example: .mutate)
 
 
 // TODO: -

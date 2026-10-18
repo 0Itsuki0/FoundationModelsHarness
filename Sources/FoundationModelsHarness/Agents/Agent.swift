@@ -430,7 +430,7 @@ public final class Agent: Sendable {
             self.history.append(.prompt(prompt))
         }
 
-        let modelStopData: ModelStopData
+        var modelStopData: ModelStopData
 
         /// `history` in `BeforeModelCall` hook should contain the last prompt if there is any.
         /// Calling it after appending the prompt.
@@ -485,7 +485,6 @@ public final class Agent: Sendable {
                         after: session.usage
                     )
                 )
-
             } catch {
                 let usage = calculateUsageDiff(
                     before: beforeCallUsage,
@@ -543,8 +542,12 @@ public final class Agent: Sendable {
                 session: session,
                 streamingInto: continuation
             )
-        case .continue:
-            break
+        case .continue(let updatedReason):
+            modelStopData = ModelStopData(
+                stopReason: updatedReason,
+                invocationState: modelStopData.invocationState,
+                usage: modelStopData.usage
+            )
         }
 
         return modelStopData
@@ -704,7 +707,7 @@ extension Agent {
             }
         }
 
-        /// update the last `Transcript.ToolCalls` in the history to handle any tool call update within the hook callback
+        /// update the last `Transcript.ToolCalls` in the history to handle any tool call update within the `BeforeToolCall` hook callback
         if let index = self.history.lastIndex(where: {
             $0.id == toolCalls.id
         }) {
@@ -859,12 +862,12 @@ extension Agent {
                 updatedSuccess.id = toolCall.id
                 updatedSuccess.toolName = toolCall.toolName
                 result = .init(
-                    toolCall: result.toolCall,
+                    toolCall: toolCall,
                     result: .success(updatedSuccess)
                 )
             case .failure(let error):
                 result = .init(
-                    toolCall: result.toolCall,
+                    toolCall: toolCall,
                     result: .failure(error)
                 )
             }
@@ -923,6 +926,7 @@ extension Agent {
             return .cancelled(outputTranscript)
         }
 
+        /// Not changing the toolCalls in the history yet here but wait for all tool calls to finish to batch update
         return .continue(event.toolCall)
     }
 
@@ -1131,6 +1135,22 @@ extension Agent {
         async -> AfterModelCallEventHandler.CallbackHandlingResult
     {
         print(#function)
+
+        /// remove the last entry from the history
+        var lastEntryId: Transcript.Entry.ID? = nil
+        switch stopData.stopReason {
+        case .endTurn(let response):
+            lastEntryId = response.id
+        case .toolUse(let toolCalls):
+            lastEntryId = toolCalls.id
+        default:
+            break
+        }
+
+        if let lastEntryId {
+            self.history.removeAll(where: { $0.id == lastEntryId })
+        }
+
         let handlers = hookRegistry.afterModelCallHandlers
         var event = AfterModelCallEventHandler.EventPayload(
             stopReason: stopData.stopReason,
@@ -1146,6 +1166,15 @@ extension Agent {
         /// Invocation retry requested. last-wins. Take priority over `resume`
         if event.retry {
             return .retry
+        }
+
+        /// update the history with the new stop reason
+        switch event.stopReason {
+        case .endTurn(let response):
+            self.history.append(.response(response))
+        case .toolUse(let toolCalls):
+            self.history.append(.toolCalls(toolCalls))
+        default: break
         }
 
         return .continue(event.stopReason)
