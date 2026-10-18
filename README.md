@@ -1,5 +1,170 @@
 # (WIP) Foundation Models Harness
 
+
+## Overview
+
+Foundation Models Harness is a Swift package for building and running AI agents on top of Apple's [Foundation Models](https://developer.apple.com/documentation/foundationmodels) framework, inspired by [Strands Agents](https://github.com/strands-agents/harness-sdk). It wraps a `LanguageModelSession` in an `Agent` that owns the agent loop: model calls, tool execution, and the lifecycle around them all run in your process, with no hosted control plane.
+
+On top of the plain session, you get:
+
+- **An explicit agent loop.** Tools are invoked programmatically by the harness instead of the framework, so every model call and every tool call can be observed, mutated, cancelled, or retried.
+- **[Hooks](#hooks)** to intercept any step of the loop to log it, validate it, or redirect it.
+- **[Plugins](#plugins)** to bundle hooks and tools into reusable behaviors.
+- **[Tool delegation](#tool-delegation)** to return a tool's output directly to the user as the final answer.
+- **State** shared between the app, hooks, and tools: `agentState` persists across requests, and `invocationState` lives for a single invocation. Neither is sent to the model.
+- **Streaming** via `streamResponse`, emitting model snapshots, tool calls, tool results, and the final result as `AgentStreamEvent`s.
+
+Requires iOS / macOS / visionOS / watchOS 27.2+ and Swift 6.4+.
+
+### Quick Start
+
+```swift
+import FoundationModels
+import FoundationModelsHarness
+
+let agent = Agent(
+    model: SystemLanguageModel(),
+    tools: [.init(tool: GreetingTool())],
+    instruction: .init("You are a helpful assistant.")
+)
+
+// Single response
+let result = await agent.respond(to: "greet itsuki")
+print(result)
+
+// Streaming
+for await event in agent.streamResponse(to: "greet dan") {
+    print(event)
+}
+```
+
+`respond` and `streamResponse` never throw. The outcome, including errors, comes back on the `AgentResult`. Per-call parameters (`schema`, `options`, `metadata`, `contextOptions`, `invocationState`, `toolExecutionMode`) fall back to `Agent.defaultInvocationOptions` when `nil`.
+
+Tool calls the model emits in a single turn run in parallel by default. Pass `toolExecutionMode: .sequential` to run them one at a time.
+
+See [`Examples/`](Examples/) for runnable examples.
+
+
+## Hooks
+
+Hooks let you add logging, validation, guardrails, or custom logic at any point in the agent loop. Lifecycle events come in Before/After pairs that bracket agent operations: if a *before* event fires, its *after* event is guaranteed to fire.
+
+### Lifecycle
+
+![Hook lifecycle](docs/hook-lifecycle.svg)
+
+| Event | When | What a callback can do |
+|-------|------|------------------------|
+| `BeforeInvocationEventHandler` | Start of an agent request, before the prompt is added to the history | Mutate `prompt`; set `cancel` to end the invocation with that content as the response |
+| `BeforeModelCallEventHandler` | Just before the model is invoked | Set `cancel` to skip the model call with that content as the response |
+| `BeforeToolsEventHandler` | Before executing the tool calls of a turn | Set `cancel` to cancel all tool calls with that content as their output |
+| `BeforeToolCallEventHandler` | Just before a single tool is executed | Mutate `toolCall` (name / arguments); set `cancel` to cancel the call with that content as its output |
+| `AfterToolCallEventHandler` | After a single tool completes | Mutate `toolResult`; set `retry` to run the tool again (`attemptCount` available) |
+| `AfterToolsEventHandler` | After all tool calls of a turn complete | Set `endTurn` to end the loop with that content as the final response |
+| `AfterModelCallEventHandler` | After the model call completes | Mutate `stopReason` (`endTurn` / `toolUse` / `refusal`); set `retry` to call the model again (`attemptCount` available) |
+| `AfterInvocationEventHandler` | End of an agent request | Read `result`; set `retry` to rerun the invocation, or `resume` with a new prompt |
+
+Every event payload also carries an `agent` snapshot to read the `history` and read or write `agentState` / `invocationState`.
+
+```swift
+let id = agent.addHook(
+    BeforeToolCallEventHandler(callback: { event in
+        // count tool calls in the agent state
+        let count = event.agent.agentState["tool_count"]?.asInt() ?? 0
+        event.agent.agentState["tool_count"] = .number(Double(count + 1))
+    })
+)
+
+agent.addHook(
+    AfterModelCallEventHandler(callback: { event in
+        // retry once on refusal
+        if case .refusal = event.stopReason, event.attemptCount < 2 {
+            event.retry = true
+        }
+    })
+)
+
+agent.removeHook(id)
+agent.removeHooks(for: [.afterModelCall])
+agent.removeAllHooks()
+```
+
+### Ordering
+
+Before callbacks run in registration order. After callbacks run in reverse registration order for cleanup symmetry. Override this with an explicit `order` in `HookCallbackOptions`: lower values run first. `BuiltInHookOrder` provides reference points, with `sdkFirst` / `sdkLast` marking where the SDK's own hooks run.
+
+```swift
+agent.addHook(
+    BeforeToolCallEventHandler(
+        callback: { event in event.cancel = "failed to greet. Do it yourself." },
+        // cancellation is last-wins, so run it after the SDK's hooks
+        options: .init(order: BuiltInHookOrder.sdkLast.rawValue + 1)
+    )
+)
+```
+
+Mutations such as `cancel`, `retry`, and `endTurn` are last-wins across callbacks.
+
+See [`Examples/Hooks/`](Examples/Hooks/) for an example per event.
+
+
+## Plugins
+
+Plugins change the typical behavior of an agent. They let you introduce concepts like skills, steering, or other behavioral modifications into the agent loop by composing the low-level primitives the `Agent` exposes: hooks and tools.
+
+Implement the `Plugin` protocol:
+
+```swift
+struct LoggingPlugin: Plugin {
+    static let name: PluginName = "LoggingPlugin"
+
+    var tools: [ToolConfig] = []
+
+    var hooks: [any HookEventHandler] {
+        [
+            BeforeModelCallEventHandler(callback: { event in
+                print("model call: \(event.agent.history.count) entries")
+            }),
+            AfterToolCallEventHandler(callback: { event in
+                print("tool result: \(event.toolResult)")
+            }),
+        ]
+    }
+}
+
+agent.addPlugin(LoggingPlugin())
+agent.removePlugin(LoggingPlugin.name)
+```
+
+Adding a plugin registers its hooks and tools on the agent. Removing it unregisters exactly those hooks and tools. A plugin whose `name` is already registered is ignored.
+
+
+## Tool Delegation
+
+By default, a tool's output is sent back to the model to generate a final response. A delegated tool short-circuits that: its output is returned directly to the user as the final answer.
+
+```swift
+let agent = Agent(
+    tools: [.init(tool: GreetingTool(), delegate: true)],
+    instruction: .init("You are a helpful assistant.")
+)
+
+let result = await agent.respond(to: "greet itsuki and dan")
+```
+
+When a tool is configured with `delegate: true`, the harness ensures:
+
+1. The agent loop exits immediately after a successful delegation (via `endTurn`).
+2. The delegated tool's output becomes the final assistant message, and is added to the history so follow-up prompts see it.
+3. The delegated tool is the only tool called in the turn. Any other tool call in the same turn is cancelled.
+
+If the delegated tool fails, the error is returned on the `AgentResult` instead.
+
+Delegation is built in as the `ToolDelegationPlugin`, using the same hooks available to you. The agent also appends a short note listing the delegated tools to the instructions so the model knows to call them alone.
+
+
+
+
 ### Consider
 
 1. Wrap streamResponse and respond in try catch and never throw

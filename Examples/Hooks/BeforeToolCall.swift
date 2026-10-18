@@ -64,7 +64,7 @@ private func setUpStateAccessing(_ agent: Agent) {
         BeforeToolCallEventHandler(callback: { event in
             print(
                 """
-                BeforeToolCallEventHandler triggered: 
+                BeforeToolCallEventHandler triggered:
                 invocationState: \(event.agent.invocationState)
                 agentState: \(event.agent.agentState)
                 history: \(event.agent.history)
@@ -73,7 +73,7 @@ private func setUpStateAccessing(_ agent: Agent) {
 
             // set state
             let toolCount =
-                event.agent.agentState["tool_count"]?.asInt() ?? 0 + 1
+                (event.agent.agentState["tool_count"]?.asInt() ?? 0) + 1
             event.agent.agentState["tool_count"] = .number(
                 Double(toolCount)
             )
