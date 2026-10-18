@@ -17,7 +17,14 @@ public struct AfterModelCallEventHandler: HookEventHandler {
 
     public struct EventPayload: Sendable {
         /// The output of the model.
-        public let stopData: ModelStopData
+        ///
+        /// Read/write.
+        ///
+        /// Can be mutated / replaced by hook callbacks to transform the result before it enters the conversation history and eventually change the next step. For example, changing tool use to an endTurn will end the turn with the message set directly.
+        public var stopReason: ModelStopReason
+
+        /// usage in this model call.
+        public let usage: LanguageModelSession.Usage
 
         /// Following parameters accessible through`agent`:
         ///
@@ -57,6 +64,6 @@ public struct AfterModelCallEventHandler: HookEventHandler {
 extension AfterModelCallEventHandler {
     enum CallbackHandlingResult: Sendable {
         case retry
-        case `continue`
+        case `continue`(ModelStopReason)
     }
 }

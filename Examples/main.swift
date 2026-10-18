@@ -68,16 +68,20 @@ let agent = Agent(
 )
 
 agent.addHook(
-    AfterToolsEventHandler(callback: { event in
-        event.endTurn = "greeted!"
+    AfterToolCallEventHandler(callback: { event in
+        if event.attemptCount < 2 {
+            event.retry = true
+        } else {
+            event.toolResult = .failure(NSError(domain: "failed", code: 1))
+        }
     })
 )
 
 //agent.agentState["app"] = "Test"
-//let result = await agent.respond(
-//    to: "hello. greet itsuki and dan",
-//    invocationState: ["resume": true]
-//)
+let result = await agent.respond(
+    to: "hello. greet itsuki",
+    invocationState: ["resume": true]
+)
 //print("result", result)
 ////print("response: ", response.rawContent as Any)
 //print("-----")
@@ -90,4 +94,10 @@ agent.addHook(
 //)
 //
 //printHistory(agent.history)
-await afterToolsHook(stream: true)
+//await beforeToolCallHook(stream: true, example: .cancellation)
+
+
+// TODO: -
+// 1. after tool call migration to agent loop
+// 2. plugin
+// 3. implement delegation as plugin

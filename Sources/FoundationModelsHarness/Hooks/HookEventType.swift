@@ -10,7 +10,7 @@ import Foundation
 /// Lifecycle events: Before/After pairs that bracket agent operations
 /// - If a *before* event is called, the *after* event is guaranteed to be called.
 /// - *after* events use reverse callback ordering for proper cleanup semantics.
-public enum HookEventType: Sendable, Hashable, Equatable {
+public enum HookEventType: Sendable, Hashable, Equatable, CaseIterable {
     // MARK: - before events
 
     /// Triggered just before the model is invoked, aka: before messages are sent to the model for inference

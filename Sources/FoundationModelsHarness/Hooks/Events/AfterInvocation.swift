@@ -16,7 +16,7 @@ import FoundationModels
 /// - Set `resume` to trigger a follow-up agent invocation with new input. When set, after this event's callbacks complete the agent re-enters its loop with these args as new input, under the same invocation lock.
 /// - Set `retry` to rollback and retry the entire  invocation.
 public struct AfterInvocationEventHandler: HookEventHandler {
-    static public let eventType: HookEventType = .beforeInvocation
+    static public let eventType: HookEventType = .afterInvocation
 
     public let id = HookID()
 

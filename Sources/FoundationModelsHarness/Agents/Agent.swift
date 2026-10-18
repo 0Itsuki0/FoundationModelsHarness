@@ -30,13 +30,13 @@ public typealias AgentState = [String: JSONValue]
 // TODO: - add invocation options in and add a default invocation option on Agent `init`.
 public struct InvocationOptions: Sendable {}
 
-extension Agent {
-    public subscript<T>(dynamicMember keyPath: KeyPath<LanguageModelSession, T>)
-        -> T
-    {
-        return self.session[keyPath: keyPath]
-    }
-}
+//extension Agent {
+//    public subscript<T>(dynamicMember keyPath: KeyPath<LanguageModelSession, T>)
+//        -> T
+//    {
+//        return self.session[keyPath: keyPath]
+//    }
+//}
 
 extension Transcript.Prompt {
     static let dummyPrompt = Transcript.Prompt(
@@ -45,7 +45,7 @@ extension Transcript.Prompt {
     )
 }
 
-@dynamicMemberLookup
+//@dynamicMemberLookup
 @Observable
 public final class Agent: Sendable {
 
@@ -114,20 +114,21 @@ public final class Agent: Sendable {
     }
 
     private func setupBuiltInHooks() {
-        self.addHook(
-            AfterToolCallEventHandler(
-                callback: { [weak self] event in
-                    guard let self else { return }
-                    if isDelegatedTool(event.toolCall.toolName) {
-                        event.endTurn = try? JSONValue(
-                            event.toolOutput.segments.rawGeneratedContent
-                        )
-                        return
-                    }
-                },
-                options: .init(order: BuiltInHookOrder.sdkLast.rawValue)
-            )
-        )
+        // TODO:  - fix delegation hook to use after tools
+        //        self.addHook(
+        //            AfterToolCallEventHandler(
+        //                callback: { [weak self] event in
+        //                    guard let self else { return }
+        //                    if isDelegatedTool(event.toolCall.toolName) {
+        //                        event.endTurn = try? JSONValue(
+        //                            event.toolOutput.segments.rawGeneratedContent
+        //                        )
+        //                        return
+        //                    }
+        //                },
+        //                options: .init(order: BuiltInHookOrder.sdkLast.rawValue)
+        //            )
+        //        )
     }
 
     @discardableResult
@@ -729,6 +730,7 @@ extension Agent {
                     return await callTool(
                         toolCall,
                         toolCalls,
+                        1,
                         continuation
                     )
                 }
@@ -756,6 +758,7 @@ extension Agent {
             let result = await callTool(
                 for: toolCall,
                 currentCalls: toolCalls,
+                currentAttempt: 1,
                 streamingInto: continuation
             )
             output.append(result)
@@ -766,8 +769,9 @@ extension Agent {
     private func callTool(
         for toolCall: Transcript.ToolCall,
         currentCalls: Transcript.ToolCalls,
+        currentAttempt: Int,
         streamingInto continuation: AsyncStream<AgentStreamEvent>
-            .Continuation?
+            .Continuation?,
     ) async
         -> ToolCallResult
     {
@@ -781,48 +785,48 @@ extension Agent {
             allCalls: currentCalls
         )
 
-        let result: ToolCallResult
+        var toolCall = toolCall
+        var result: ToolCallResult
 
         switch beforeCallResult {
         case .cancelled(let toolOutput):
             result = .init(toolCall: toolCall, result: .success(toolOutput))
-        case .continue(let toolCall):
+        case .continue(let updatedCall):
+            toolCall = updatedCall
             do {
                 let toolOutput: any PromptRepresentable
                 let schemaName: String
-                if let tool = getTool(with: toolCall.toolName) {
+                if let tool = getTool(with: updatedCall.toolName) {
                     toolOutput = try await tool.call(
-                        arguments: toolCall.arguments
+                        arguments: updatedCall.arguments
                     ).output
                     schemaName = tool.parameters.name
                 } else {
                     let toolNotFound = ToolOutputWrapper(
-                        missingTool: toolCall.toolName
+                        missingTool: updatedCall.toolName
                     )
                     toolOutput = toolNotFound.promptRepresentation
                     schemaName = "GeneratedContent"
                 }
 
                 let outputTranscript = await Transcript.ToolOutput(
-                    id: toolCall.id,
-                    toolName: toolCall.toolName,
+                    id: updatedCall.id,
+                    toolName: updatedCall.toolName,
                     segments: self.toolOutputSegments(
                         from: toolOutput,
                         schemaName: schemaName
                     )
                 )
 
-                self.history.append(.toolOutput(outputTranscript))
-
                 result = .init(
-                    toolCall: toolCall,
+                    toolCall: updatedCall,
                     result: .success(outputTranscript)
                 )
             } catch {
                 result = .init(
-                    toolCall: toolCall,
+                    toolCall: updatedCall,
                     result: .failure(
-                        ToolCallError(toolCall: toolCall, error: error)
+                        ToolCallError(toolCall: updatedCall, error: error)
                     )
                 )
             }
@@ -832,7 +836,45 @@ extension Agent {
         /// Pro: immediate feed back instead of waiting for all hooks to finish
         /// Con: in case the output is transformed in the hook, what user sees could be different to what is actually added to the session
         continuation?.yield(.init(toolResult: result.result))
-        await self.afterToolCall()
+
+        let afterToolResult = await self.afterToolCall(
+            result: result,
+            currentAttempt: currentAttempt
+        )
+
+        switch afterToolResult {
+        case .retry:
+            /// no history modified yet in the call therefore no need to roll back
+            /// return the retry directly.
+            return await self.callTool(
+                for: toolCall,
+                currentCalls: currentCalls,
+                currentAttempt: currentAttempt + 1,
+                streamingInto: continuation
+            )
+        case .continue(let updatedResult):
+            switch updatedResult {
+            case .success(var updatedSuccess):
+                /// make sure the id and name is correct as the pairing is required by the framework
+                updatedSuccess.id = toolCall.id
+                updatedSuccess.toolName = toolCall.toolName
+                result = .init(
+                    toolCall: result.toolCall,
+                    result: .success(updatedSuccess)
+                )
+            case .failure(let error):
+                result = .init(
+                    toolCall: result.toolCall,
+                    result: .failure(error)
+                )
+            }
+        }
+
+        /// Adding to history after the hooks to handle possible transformations
+        if let success = try? result.result.get() {
+            self.history.append(.toolOutput(success))
+        }
+
         return result
     }
 }
@@ -884,8 +926,29 @@ extension Agent {
         return .continue(event.toolCall)
     }
 
-    private func afterToolCall() async {
+    private func afterToolCall(result: ToolCallResult, currentAttempt: Int)
+        async -> AfterToolCallEventHandler.CallbackHandlingResult
+    {
         print(#function)
+
+        let handlers = hookRegistry.afterToolCallHandlers
+        var event = AfterToolCallEventHandler.EventPayload(
+            toolCall: result.toolCall,
+            toolResult: result.result,
+            agent: agentSnapshot,
+            attemptCount: currentAttempt
+        )
+
+        for handler in handlers {
+            await handler.callback(&event)
+        }
+
+        if event.retry {
+            return .retry
+        }
+
+        return .continue(event.toolResult)
+
     }
 
     private func beforeTools(toolCalls: Transcript.ToolCalls) async
@@ -953,7 +1016,7 @@ extension Agent {
 
         if let endTurn = event.endTurn {
             /// wrap any `ToolCallResult.output.failure` with `ToolOutputWrapper` and add to history.
-            for (index, result) in toolCallResults.enumerated() {
+            for result in toolCallResults {
                 switch result.result {
                 case .success(_):
                     continue
@@ -1070,7 +1133,8 @@ extension Agent {
         print(#function)
         let handlers = hookRegistry.afterModelCallHandlers
         var event = AfterModelCallEventHandler.EventPayload(
-            stopData: stopData,
+            stopReason: stopData.stopReason,
+            usage: stopData.usage,
             agent: agentSnapshot,
             attemptCount: currentAttempt
         )
@@ -1084,7 +1148,7 @@ extension Agent {
             return .retry
         }
 
-        return .continue
+        return .continue(event.stopReason)
 
     }
 
@@ -1133,50 +1197,50 @@ extension Agent {
     ) async throws {
         /// `history` will contains the last Transcript.ToolCalls entry but should **NOT** contain the `Transcript.ToolOutput`
         /// However, still do a defensive filtering here.
-        var historyBeforeOutput = history
-        historyBeforeOutput.removeAll {
-            $0.asToolOutput != nil && $0.id == toolOutput.id
-        }
-
-        let handlers = hookRegistry.afterToolCallHandlers
-        var event = AfterToolCallEventHandler.EventPayload(
-            toolCall: toolCall,
-            toolOutput: toolOutput,
-            agent: createLocalAgent(with: historyBeforeOutput),
-            attemptCount: max(1, attemptCount)
-        )
-
-        for handler in handlers {
-            await handler.callback(&event)
-        }
-
-        // TODO: - handle event.toolOutput change
-
-        /// Retry Tool call. last-wins.
-        if event.retry {
-            return try await retryToolCall(toolCall, attemptCount: attemptCount)
-        }
-
-        /// Short-circuit to the output with the `endTurn` value
-        if let endTurn = event.endTurn {
-            /// programmatically append tool output to history
-            self.history.append(.toolOutput(event.toolOutput))
-
-            /// programmatically append `endTurn` as model response to history
-            let response = Transcript.Response(
-                segments: SegmentBuilder.segments(
-                    from: endTurn,
-                    schemaName: "GeneratedContent"
-                )
-            )
-            self.history.append(.response(response))
-
-            /// programmatically trigger `onResponse`
-            try await self.handleOnResponse(response)
-
-            /// throw `ResponseFinishedError` to break out of the agent loop
-            throw ResponseFinishedError(response)
-        }
+        //        var historyBeforeOutput = history
+        //        historyBeforeOutput.removeAll {
+        //            $0.asToolOutput != nil && $0.id == toolOutput.id
+        //        }
+        //
+        //        let handlers = hookRegistry.afterToolCallHandlers
+        //        var event = AfterToolCallEventHandler.EventPayload(
+        //            toolCall: toolCall,
+        //            toolOutput: toolOutput,
+        //            agent: createLocalAgent(with: historyBeforeOutput),
+        //            attemptCount: max(1, attemptCount)
+        //        )
+        //
+        //        for handler in handlers {
+        //            await handler.callback(&event)
+        //        }
+        //
+        //        // TODO: - handle event.toolOutput change
+        //
+        //        /// Retry Tool call. last-wins.
+        //        if event.retry {
+        //            return try await retryToolCall(toolCall, attemptCount: attemptCount)
+        //        }
+        //
+        //        /// Short-circuit to the output with the `endTurn` value
+        //        if let endTurn = event.endTurn {
+        //            /// programmatically append tool output to history
+        //            self.history.append(.toolOutput(event.toolOutput))
+        //
+        //            /// programmatically append `endTurn` as model response to history
+        //            let response = Transcript.Response(
+        //                segments: SegmentBuilder.segments(
+        //                    from: endTurn,
+        //                    schemaName: "GeneratedContent"
+        //                )
+        //            )
+        //            self.history.append(.response(response))
+        //
+        //            /// programmatically trigger `onResponse`
+        //            try await self.handleOnResponse(response)
+        //
+        //            /// throw `ResponseFinishedError` to break out of the agent loop
+        //            throw ResponseFinishedError(response)
+        //        }
     }
 
     private func retryToolCall(

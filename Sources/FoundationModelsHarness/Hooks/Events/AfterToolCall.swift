@@ -14,18 +14,17 @@ public struct AfterToolCallEventHandler: HookEventHandler {
 
     public struct EventPayload: Sendable {
         /// The tool call that triggers the output.
-        ///
-        /// Read only.
         public let toolCall: Transcript.ToolCall
 
-        // TODO: - change this to a result where the failure is the error thrown by the tool
-        // error will be penetrated directly up to agent result after the *After* hooks being called.
         /// The output of the tool call.
         ///
         /// Read/write. Last-wins.
         ///
         /// Can be mutated / replaced by hook callbacks to transform the result before it enters the conversation history.
-        public var toolOutput: Transcript.ToolOutput
+        /// Failure is the error thrown by the `Tool.call(arguments:)`. If not modified to a success, the error will be penetrated directly up to agent result as `toolCallError`
+        ///
+        /// Changes in the `Transcript.ToolOutput`'s `id` and `toolName` will be ignored as those will need to be paired up with the `toolCall`
+        public var toolResult: Result<Transcript.ToolOutput, Error>
 
         /// Following parameters accessible through`agent`:
         ///
@@ -47,17 +46,6 @@ public struct AfterToolCallEventHandler: HookEventHandler {
         /// new retry sequence (e.g. to clear per-turn state carried over from a
         /// previous turn). The agent loop guarantees this marker on every fresh turn.
         public let attemptCount: Int
-
-        /// Set to a non-nil value to end the turn (agent loop) after this tool completes. (`JSONValue.null` will end the turn.)
-        /// The value set here will become the final assistant message content directly.
-        ///
-        /// Read/write. Last-wins.
-        ///
-        /// `AfterInvocation` hook will be triggered with the model response created from the `endTurn` value.
-        ///
-        /// `stopReason` on the returned `AgentResult` is `endTurn`.
-        public var endTurn: JSONValue?
-
     }
 
     public let callback: @Sendable (inout EventPayload) async -> Void
@@ -69,5 +57,12 @@ public struct AfterToolCallEventHandler: HookEventHandler {
     ) {
         self.callback = callback
         self.options = options
+    }
+}
+
+extension AfterToolCallEventHandler {
+    enum CallbackHandlingResult: Sendable {
+        case retry
+        case `continue`(Result<Transcript.ToolOutput, Error>)
     }
 }
