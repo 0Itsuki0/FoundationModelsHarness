@@ -9,6 +9,7 @@ import FoundationModels
 import SwiftUI
 
 /// Public `SessionPropertyValues` for possible access from the tools
+/// `SessionPropertyValues` is already per-session, aka: per agent, so there is no need to use an `[agent:value]`map
 extension SessionPropertyValues {
     /// Agent state accessible to tools and application logic.
     /// Lives outside the conversation context and persists across requests
@@ -26,6 +27,7 @@ extension SessionPropertyValues {
 /// Package `SessionPropertyValues`
 ///
 /// Using `SessionPropertyValues` instead of storing directly because `Agent` cannot store mutable or non-sendable values
+/// `SessionPropertyValues` is already per-session, aka: per agent, so there is no need to use an `[agent:value]`map
 extension SessionPropertyValues {
     /// Tools registered to the agent.
     @SessionPropertyEntry
@@ -103,7 +105,8 @@ public enum ToolExecutionMode: Sendable, Equatable, Hashable {
 }
 
 @Observable
-public final class Agent: Sendable {
+public final class Agent: Sendable, Identifiable {
+    public let id = UUID()
 
     /// Agent state accessible to tools and application logic.
     /// Lives outside the conversation context and persists across requests
@@ -235,18 +238,24 @@ public final class Agent: Sendable {
     }
 
     private func setupBuiltInHooks() {
-        self.addPlugin(ToolDelegationPlugin(self.delegatedToolName))
+        Task {
+            /// `ToolDelegationPlugin` never throws so swallowing with `try?` is fine here.
+            try? await self.addPlugin(
+                ToolDelegationPlugin(self.delegatedToolName)
+            )
+        }
     }
 
     @discardableResult
-    public func addPlugin<T: Plugin>(_ plugin: T) -> String {
-        return self.pluginRegistry.registerPlugin(plugin, to: self)
+    public func addPlugin<T: Plugin>(_ plugin: T) async throws -> String {
+        return try await self.pluginRegistry.registerPlugin(plugin, to: self)
     }
 
-    public func removePlugin(_ name: String) {
-        self.pluginRegistry.removePlugin(name, from: self)
+    public func removePlugin(_ name: String) async throws {
+        try await self.pluginRegistry.removePlugin(name, from: self)
     }
 
+    // TODO: - if the added/removed tool is a delegated tool, update instruction, delegation plugin accordingly
     @discardableResult
     public func addTool(_ tool: ToolConfig) -> String {
         self.removeTool(tool.toolName)

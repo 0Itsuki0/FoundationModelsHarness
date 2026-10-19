@@ -6,6 +6,7 @@
 //
 
 /// Registry for managing plugins.
+/// One instance per session, aka: Agent. (Satisfied automatically when using with `SessionPropertyValues`)
 class PluginRegistry {
     private var plugins: [RegisteredPlugin] = []
 
@@ -15,29 +16,29 @@ class PluginRegistry {
 
     /// Add to the registry and register hooks.
     /// If a plugin with the given name is already registered, return immediately
-    func registerPlugin<T: Plugin>(_ plugin: T, to agent: Agent) -> PluginName {
+    func registerPlugin<T: Plugin>(_ plugin: T, to agent: Agent) async throws
+        -> PluginName
+    {
         guard !self.plugins.map(\.pluginName).contains(T.name) else {
             return T.name
         }
-        /// add hooks
-        let hookIds = plugin.hooks.map(agent.addHook(_:))
 
-        /// add tools
-        let toolNames = plugin.tools.map(agent.addTool(_:))
+        let result = try await plugin.initAgent(agent)
 
         self.plugins.append(
             RegisteredPlugin(
                 plugin: plugin,
                 pluginName: T.name,
-                hookIds: hookIds,
-                toolNames: toolNames
+                hookIds: result.addedHooks,
+                toolNames: result.addedTools
             )
         )
+
         return T.name
     }
 
     /// remove a plugin
-    func removePlugin(_ name: String, from agent: Agent) {
+    func removePlugin(_ name: String, from agent: Agent) async throws {
         guard let plugin = self.plugins.first(where: { $0.pluginName == name })
         else {
             return
@@ -46,6 +47,9 @@ class PluginRegistry {
         plugin.hookIds.forEach(agent.removeHook(_:))
         plugin.toolNames.forEach(agent.removeTool(_:))
         self.plugins.removeAll(where: { $0.pluginName == name })
+
+        // calling it after removing the hooks and tools as it is async and might take time.
+        try await plugin.plugin.deInitAgent(agent)
     }
 }
 

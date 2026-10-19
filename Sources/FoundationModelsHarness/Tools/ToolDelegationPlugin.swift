@@ -7,25 +7,19 @@
 
 import FoundationModels
 
-/// ToolDelegationPlugin:
+/// `ToolDelegationPlugin`:
 /// short-circuit tool output directly to agent output (if success) instead of sending the tool output back to the model to generate a final response.
 ///
 /// using an `actor` here to handle potential parallel hook callbacks.
 actor ToolDelegationPlugin: Plugin {
-    static let name: String = "FoundationModelsHarness_DelegationPlugin"
-
-    let tools: [ToolConfig] = []
+    static let name: String = "FoundationModelsHarness_ToolDelegationPlugin"
 
     private let delegatedTools: [String]
 
     /// current delegated tool that is being executed.
     private var executingToolCallId: Transcript.ToolCall.ID?
 
-    init(_ delegatedTools: [String]) {
-        self.delegatedTools = delegatedTools
-    }
-
-    nonisolated var hooks: [any HookEventHandler] {
+    nonisolated private var hooks: [any HookEventHandler] {
         return [
             BeforeModelCallEventHandler(
                 callback: { _ in await self.reset() },
@@ -41,6 +35,19 @@ actor ToolDelegationPlugin: Plugin {
             ),
         ]
     }
+
+    private var hookIds: [HookID] = []
+
+    init(_ delegatedTools: [String]) {
+        self.delegatedTools = delegatedTools
+    }
+
+    func initAgent(_ agent: Agent) -> PluginInitResult {
+        let hookIds = hooks.map(agent.addHook(_:))
+        return PluginInitResult(addedHooks: hookIds, addedTools: [])
+    }
+
+    func deInitAgent(_ agent: Agent) {}
 
     private func getExecutingToolCallId() -> String? {
         return self.executingToolCallId

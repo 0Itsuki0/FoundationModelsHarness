@@ -13,8 +13,10 @@ import FoundationModels
 ///     When a tool is configured with `delegate: true`, this package ensures:
 ///     1. The agent loop exits immediately after a successful delegation (via endTurn)
 ///     2. The delegation tool's content blocks become the final assistant message
+public typealias ToolName = String
+
 public struct ToolConfig: Sendable {
-    var toolName: String {
+    var toolName: ToolName {
         self.tool.name
     }
 

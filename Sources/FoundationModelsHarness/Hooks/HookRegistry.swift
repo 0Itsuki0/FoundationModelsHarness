@@ -31,6 +31,7 @@ struct HookOrdered<T: HookEventHandler> {
 }
 
 /// Interface for hook registry operations
+/// One instance per session, aka: Agent. (Satisfied automatically when using with `SessionPropertyValues`)
 class HookRegistry {
     // MARK: - Before Event
     @HookOrdered
