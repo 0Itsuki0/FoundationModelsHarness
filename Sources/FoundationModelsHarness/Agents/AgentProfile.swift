@@ -21,6 +21,11 @@ struct AgentProfile: LanguageModelSession.DynamicProfile {
     private var instruction
 
     var body: some LanguageModelSession.DynamicProfile {
+        let instruction = ToolDelegationPlugin.injectDelegationPrompt(
+            for: tools,
+            on: instruction
+        )
+
         Profile {
             instruction
             /// **IMPORTANT**:

@@ -62,10 +62,11 @@ func segments(from prompt: PromptRepresentable) async -> [Transcript
 //
 let agent = Agent(
     tools: [
-        .init(tool: GreetingTool(), delegate: true)
+//        .init(tool: GreetingTool(), delegate: true)
     ],
     instruction: .init("You are a helpful assistant.")
 )
+agent.addTool(.init(tool: GreetingTool(), delegate: true))
 
 //agent.addHook(
 //    AfterToolCallEventHandler(callback: { event in
@@ -77,17 +78,10 @@ let agent = Agent(
 //    })
 //)
 
-agent.agentState["app"] = "Test"
+//agent.agentState["app"] = "Test"
 let result = await agent.respond(
     to: "hello. greet itsuki",
     invocationState: ["resume": true]
-)
-
-await Agent(tools: [
-    .init(tool: GreetingTool(), delegate: true)
-]).respond(
-    to: "hello. greet itsuki",
-    invocationState: ["test": 12]
 )
 
 //print("result", result)
@@ -101,6 +95,6 @@ await Agent(tools: [
 //    agent.streamResponse(to: "how's going?")
 //)
 //
-//printHistory(agent.history)
+printHistory(agent.history)
 
 //await toolDelegation()

@@ -11,10 +11,11 @@ import FoundationModels
 /// short-circuit tool output directly to agent output (if success) instead of sending the tool output back to the model to generate a final response.
 ///
 /// using an `actor` here to handle potential parallel hook callbacks.
+/// Non-public to avoid re-using one instance for multiple agent.
 actor ToolDelegationPlugin: Plugin {
     static let name: String = "FoundationModelsHarness_ToolDelegationPlugin"
 
-    private let delegatedTools: [String]
+    private var delegatedTools: [ToolName]
 
     /// current delegated tool that is being executed.
     private var executingToolCallId: Transcript.ToolCall.ID?
@@ -36,9 +37,7 @@ actor ToolDelegationPlugin: Plugin {
         ]
     }
 
-    private var hookIds: [HookID] = []
-
-    init(_ delegatedTools: [String]) {
+    init(_ delegatedTools: [String] = []) {
         self.delegatedTools = delegatedTools
     }
 
@@ -56,6 +55,18 @@ actor ToolDelegationPlugin: Plugin {
     private func eraseExecutingToolCallId() {
         self.executingToolCallId = nil
         return
+    }
+
+    private func getDelegatedTools() -> [ToolName] {
+        return self.delegatedTools
+    }
+
+    nonisolated func setDelegatedTools(_ delegatedTools: [String]) async {
+        await self._setDelegatedTools(delegatedTools)
+    }
+
+    private func _setDelegatedTools(_ delegatedTools: [String]) {
+        self.delegatedTools = delegatedTools
     }
 
     /// returning whether if the set is successful or not
@@ -77,16 +88,17 @@ actor ToolDelegationPlugin: Plugin {
     nonisolated private func beforeToolCall(
         _ event: inout BeforeToolCallEventHandler.EventPayload
     ) async {
+        let delegatedTools = await getDelegatedTools()
         /// no delegated tool calls in this turn at all. return early.
         guard
             event.toolCalls.map(\.toolName).contains(where: {
-                self.delegatedTools.contains($0)
+                delegatedTools.contains($0)
             })
         else { return }
 
         /// current tool being executed is the delegated tool && no delegated tool is being executed yet.
         /// If the tool mode is parallel, those might still coming in before
-        if self.delegatedTools.contains(event.toolCall.toolName),
+        if delegatedTools.contains(event.toolCall.toolName),
             await self.trySetExecutingToolCallId(event.toolCall.id)
         {
             return

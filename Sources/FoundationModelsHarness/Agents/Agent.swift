@@ -135,11 +135,10 @@ public final class Agent: Sendable, Identifiable {
             session.properties.instruction
         }
         set {
-            let new = ToolDelegationPlugin.injectDelegationPrompt(
-                for: tools,
-                on: newValue
-            )
-            session.properties.instruction = new
+            /// NOTE: not injecting delegation prompt here with `ToolDelegationPlugin.injectDelegationPrompt` to
+            /// 1. keep a clean version of the instruction
+            /// 2. handle dynamic tool changes.
+            session.properties.instruction = newValue
         }
     }
 
@@ -208,6 +207,8 @@ public final class Agent: Sendable, Identifiable {
         [InternalMetadataKey.dummyPrompt: true]
     }
 
+    private let delegationPlugin = ToolDelegationPlugin()
+
     /// Create an agent with configurations.
     ///
     /// - Parameters:
@@ -223,10 +224,9 @@ public final class Agent: Sendable, Identifiable {
         defaultInvocationOptions: InvocationOptions = InvocationOptions(),
         history: [Transcript.Entry] = []
     ) {
-        let instruction = ToolDelegationPlugin.injectDelegationPrompt(
-            for: tools,
-            on: instruction
-        )
+        /// NOTE: not injecting delegation prompt here with `ToolDelegationPlugin.injectDelegationPrompt` to
+        /// 1. keep a clean version of the instruction
+        /// 2. handle dynamic tool changes.
         let profile = AgentProfile()
         let session = LanguageModelSession(profile: profile, history: history)
         self.session = session
@@ -238,10 +238,21 @@ public final class Agent: Sendable, Identifiable {
     }
 
     private func setupBuiltInHooks() {
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             /// `ToolDelegationPlugin` never throws so swallowing with `try?` is fine here.
-            try? await self.addPlugin(
-                ToolDelegationPlugin(self.delegatedToolName)
+            let _ = try? await self.addPlugin(self.delegationPlugin)
+        }
+
+        /// the order of setting delegated tool names and adding it to the plugin registry does not matter.
+        self.updateDelegationPlugin()
+    }
+
+    private func updateDelegationPlugin() {
+        Task { [weak self] in
+            guard let self else { return }
+            await self.delegationPlugin.setDelegatedTools(
+                self.delegatedToolName
             )
         }
     }
@@ -255,16 +266,21 @@ public final class Agent: Sendable, Identifiable {
         try await self.pluginRegistry.removePlugin(name, from: self)
     }
 
-    // TODO: - if the added/removed tool is a delegated tool, update instruction, delegation plugin accordingly
-    @discardableResult
-    public func addTool(_ tool: ToolConfig) -> String {
+    @discardableResult public func addTool(_ tool: ToolConfig) -> String {
         self.removeTool(tool.toolName)
         self.tools.append(tool)
+        /// only update the plugin if necessary, aka: a new delegated tool added
+        /// No need to update instruction even if a delegated tool is added/removed as it is built on dynamically.
+        if tool.delegate { updateDelegationPlugin() }
         return tool.toolName
     }
 
-    public func removeTool(_ name: String) {
+    public func removeTool(_ name: ToolName) {
+        let isDelegated = self.delegatedToolName.contains(name)
         self.tools.removeAll(where: { $0.toolName == name })
+        /// only update the plugin if necessary, aka: a delegated tool is removed
+        /// No need to update instruction even if a delegated tool is added/removed as it is built on dynamically.
+        if isDelegated { updateDelegationPlugin() }
     }
 
     @discardableResult

@@ -11,12 +11,13 @@
 
 import FoundationModels
 
-public class MemoryPlugin/*: Plugin*/ {
-    public static let name: PluginName = "FoundationModelsHarness_MemoryPlugin"
+/// Non-public to avoid re-using one instance for multiple agent.
+class MemoryPlugin /*: Plugin*/ {
+    static let name: PluginName = "FoundationModelsHarness_MemoryPlugin"
 
-    public let hooks: [any HookEventHandler] = []
+    let hooks: [any HookEventHandler] = []
 
-    public let tools: [ToolConfig] = []
+    let tools: [ToolConfig] = []
 
     //    let enableAutoExtraction: Bool
     // true to add a extractor that extract queries to be written to memory every x turns
