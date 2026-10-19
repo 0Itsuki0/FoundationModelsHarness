@@ -77,12 +77,19 @@ let agent = Agent(
 //    })
 //)
 
-//agent.agentState["app"] = "Test"
-//let result = await agent.respond(
-//    to: "hello. greet itsuki and dan",
-//    invocationState: ["resume": true]
-//)
-//
+agent.agentState["app"] = "Test"
+let result = await agent.respond(
+    to: "hello. greet itsuki",
+    invocationState: ["resume": true]
+)
+
+await Agent(tools: [
+    .init(tool: GreetingTool(), delegate: true)
+]).respond(
+    to: "hello. greet itsuki",
+    invocationState: ["test": 12]
+)
+
 //print("result", result)
 ////print("response: ", response.rawContent as Any)
 //print("-----")
@@ -96,4 +103,4 @@ let agent = Agent(
 //
 //printHistory(agent.history)
 
-await afterToolsHook()
+//await toolDelegation()
