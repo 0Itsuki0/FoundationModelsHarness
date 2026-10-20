@@ -257,6 +257,9 @@ public final class Agent: Sendable, Identifiable {
         }
     }
 
+    // TODO: -
+    // 1. guard against removing SDK plugins
+    // 2. guard against removing hooks / tools added as plugins
     @discardableResult
     public func addPlugin<T: Plugin>(_ plugin: T) async throws -> String {
         return try await self.pluginRegistry.registerPlugin(plugin, to: self)

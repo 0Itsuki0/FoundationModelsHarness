@@ -12,12 +12,21 @@
 import FoundationModels
 
 /// Non-public to avoid re-using one instance for multiple agent.
-class MemoryPlugin /*: Plugin*/ {
+class MemoryPlugin: Plugin {
+
     static let name: PluginName = "FoundationModelsHarness_MemoryPlugin"
 
-    let hooks: [any HookEventHandler] = []
+    func initAgent(_ agent: Agent) async -> PluginInitResult {
+        return PluginInitResult(addedHooks: [], addedTools: [])
+    }
 
-    let tools: [ToolConfig] = []
+    func deInitAgent(_ agent: Agent) async {
+
+    }
+
+    //    let hooks: [any HookEventHandler] = []
+    //
+    //    let tools: [ToolConfig] = []
 
     //    let enableAutoExtraction: Bool
     // true to add a extractor that extract queries to be written to memory every x turns
@@ -25,33 +34,42 @@ class MemoryPlugin /*: Plugin*/ {
 }
 
 /// Automatic-memory-extraction configuration.
-public struct MemoryAutoExtractionConfig {
+public struct MemoryAutoExtractionConfig<T: MemoryExtractor> {
     /// Extractor to transform conversation messages into discrete, searchable entries.
-    public let extractor: MemoryExtractor
+    public let extractor: T
 
     /// turns to buffer before running extraction. Default to 5.
     public let turnBufferCount: Int
 
-    public init(extractor: MemoryExtractor, turnBufferCount: Int = 5) {
+    public let onExtraction: (T.ExtractionResult) async -> Void
+
+    public init(
+        extractor: T,
+        turnBufferCount: Int,
+        onExtraction: @escaping (T.ExtractionResult) async -> Void
+    ) {
         self.extractor = extractor
         self.turnBufferCount = turnBufferCount
+        self.onExtraction = onExtraction
     }
 }
 
 public protocol MemoryStore {
-    /// Search the store for entries matching the query, ordered by relevance
-    func addMemory() async throws
+    /// A single memory entry retrieved from or to be added to a memory store.
+    associatedtype
+        MemoryEntry: ConvertibleFromGeneratedContent & PromptRepresentable
 
     /// Add a single piece of content to the store
-    func searchMemory() async throws
-}
+    func addMemory(_ entry: MemoryEntry) async throws
 
-extension MemoryStore {
-    public func onNewTranscript() {}
+    /// Search the store for entries matching the query, ordered by relevance
+    func searchMemory() async throws -> [MemoryEntry]
 }
 
 /// Transforms conversation messages into discrete, searchable entries.
 public protocol MemoryExtractor {
+    associatedtype ExtractionResult
+
     /// - Parameters:
     ///   - messages: filtered messages (only prompt and response) to extract from
     func extractMemory(from messages: [Transcript.Entry]) async throws
@@ -59,12 +77,12 @@ public protocol MemoryExtractor {
 }
 
 /// A discrete entry produced by a `MemoryExtractor`, ready to be written to a store via its `MemoryStore.addMemory`.
-public struct ExtractionResult {
-    let content: String
-    let metadata: [String: JSONValue]?
-}
+//public struct ExtractionResult {
+//    let content: String
+//    let metadata: [String: JSONValue]?
+//}
 
-public class LanguageModelExtractor: MemoryExtractor {
+public class LanguageModelExtractor /*: MemoryExtractor*/ {
     public static let defaultInstruction = """
         You extract durable facts worth remembering across future conversations from a transcript.
 
@@ -75,13 +93,56 @@ public class LanguageModelExtractor: MemoryExtractor {
         - If there is nothing worth remembering, return [].
         """
 
+    public typealias DefaultOutput = [String]
+
+    //    public struct StructuredOutput {
+    //        let schema: GenerationSchema
+    //        let convert: (GeneratedContent) throws -> [ExtractionResult]
+    //
+    //        init(
+    //            schema: GenerationSchema = DefaultOutput.self.generationSchema,
+    //            convert: @escaping (GeneratedContent) throws -> [ExtractionResult] =
+    //                {
+    //                    rawContent in
+    //                    let value: DefaultOutput = try rawContent.value()
+    //                    return value.map({
+    //                        ExtractionResult(content: $0, metadata: nil)
+    //                    })
+    //                }
+    //        ) {
+    //            self.schema = schema
+    //            self.convert = convert
+    //        }
+    //    }
+    //
+    //    public struct Structured<T:ConvertibleFromGeneratedContent> {
+    //        let type: T
+    //        let convert: (T) throws -> [ExtractionResult]
+    //
+    //        init(
+    //            type: T = DefaultOutput.self,
+    //            convert: @escaping (GeneratedContent) throws -> [ExtractionResult] =
+    //            {
+    //                rawContent in
+    //                let value: DefaultOutput = try rawContent.value()
+    //                return value.map({
+    //            ExtractionResult(content: $0, metadata: nil)
+    //        })
+    //            }
+    //        ) {
+    //            self.schema = schema
+    //            self.convert = convert
+    //        }
+    //    }
+
     private let session: LanguageModelSession
 
     init(
         model: any LanguageModel = SystemLanguageModel(),
         instruction: Instructions = Instructions {
             LanguageModelExtractor.defaultInstruction
-        }
+        },
+        //        structuredOutput: StructuredOutput = StructuredOutput()
     ) {
         self.session = LanguageModelSession(
             model: model,
@@ -89,13 +150,17 @@ public class LanguageModelExtractor: MemoryExtractor {
         )
     }
 
-    public func extractMemory(from messages: [Transcript.Entry]) async throws
-        -> [ExtractionResult]
+    public func extractMemory(from messages: [Transcript.Entry])
+        async throws  //        -> [ExtractionResult]
     {
         /// Not using the Agent wrapper here since it is just one turn call without tools / retries.
         self.clearSessionHistory()
 
-        return []
+        return
+    }
+
+    private func buildPrompt(from messages: [Transcript.Entry]) -> String {
+        return messages.map(\.description).joined(separator: "\n")
     }
 
     /// remove all conversational entries
@@ -104,50 +169,87 @@ public class LanguageModelExtractor: MemoryExtractor {
     }
 }
 
-private struct AddMemoryTool: Tool {
-    let name = "add_memory"
-    let description =
-        "Add facts, preferences, or decisions to long-term memory so they are remembered across conversations. Use when the user shares something worth recalling later."
 
-    /// accessing states from the tools if necessary
-    @SessionProperty(\.agentState)
-    private var agentState
+/// JSON File MemoryStore: An entry per fact: {category, fact, ts}
+///
+/// Categories:
+/// About the user
+/// - identity: name, role, timezone, language
+/// - preferences: style, formatting, tools, tone
+/// - goals: what they're working toward
+/// - constraints: things to avoid, hard rules
+/// - feedback: corrections given to the agent
+///
+/// About the work
+/// - project: architecture, stack, key files, status
+/// - conventions: code style, naming, team norms
+/// - decisions: choices made and why
+/// - procedures: how to do recurring tasks (deploy, release, test)
+/// - issues: known bugs, gotchas, workarounds
+///
+/// About the world
+/// - people: teammates, contacts, who owns what
+/// - references: URLs, docs, dashboards, tickets
+/// - facts: general knowledge that doesn't fit elsewhere
+///
+/// About time
+/// - events: things that happened, with dates
+/// - tasks: open to-dos and follow-ups
+class FileMemoryStore {
+    
+    @Generable(description: """
+    Categories for agent long-term memory:
+    About the user
+    - identity: name, role, timezone, language
+    - preferences: style, formatting, tools, tone
+    - goals: what they're working toward
+    - constraints: things to avoid, hard rules
+    - feedback: corrections given to the agent
 
-    @SessionProperty(\.invocationState)
-    private var invocationState
+    About the work
+    - project: architecture, stack, key files, status
+    - conventions: code style, naming, team norms
+    - decisions: choices made and why
+    - procedures: how to do recurring tasks (deploy, release, test)
+    - issues: known bugs, gotchas, workarounds
 
-    @Generable
-    struct Arguments {
-        @Guide(description: "The name to greet")
-        var name: String
-    }
+    About the world
+    - people: teammates, contacts, who owns what
+    - references: URLs, docs, dashboards, tickets
+    - facts: general knowledge that doesn't fit elsewhere
 
-    func call(arguments: Arguments) async throws -> String {
-        print("Tool[\(name)] called with arguments: \(arguments)")
-        return "Hello \(arguments.name)"
+    About time
+    - events: things that happened, with dates
+    - tasks: open to-dos and follow-ups
+    """)
+    enum Category: String, Codable {
+        /// About the user
+        case identity
+        case preferences
+        case goals
+        case constraints
+        case feedback
+        
+        ///About the work
+        case project
+        case conventions
+        case decisions
+        case procedures
+        case issues
+
+        /// About the world
+        case people
+        case references
+        case facts
+        
+        /// About time
+        case events
+        case tasks
     }
 }
 
-private struct SearchMemoryTool: Tool {
-    let name = "search_memory"
-    let description =
-        "Search long-term memory for facts, preferences, or context from previous conversations. Use when you need background about the user or topic that may have been discussed before."
 
-    /// accessing states from the tools if necessary
-    @SessionProperty(\.agentState)
-    private var agentState
 
-    @SessionProperty(\.invocationState)
-    private var invocationState
+/// SQLite + FTS5 MemoryStore
+class SQLiteMemoryStore {}
 
-    @Generable
-    struct Arguments {
-        @Guide(description: "The name to greet")
-        var name: String
-    }
-
-    func call(arguments: Arguments) async throws -> String {
-        print("Tool[\(name)] called with arguments: \(arguments)")
-        return "Hello \(arguments.name)"
-    }
-}
