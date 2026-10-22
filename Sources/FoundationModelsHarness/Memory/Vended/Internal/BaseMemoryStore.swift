@@ -12,7 +12,6 @@ import NaturalLanguage
 /// The base memory store logic that other SDK-provided store will be wrapping
 actor BaseMemoryStore {
 
-
     private var addedMemories: [MemoryEntry] = []
 
     /// Add a memory as a new entry only if the cosine distance is larger than `addThresholdDistance`,

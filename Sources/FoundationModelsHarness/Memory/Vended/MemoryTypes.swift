@@ -86,19 +86,19 @@ public struct MemorySearchResult {
 
     @Guide(
         description: """
-            The cosine distance between the query and retrieved fact, if available.
+            The cosine similarity between the query and retrieved fact, if available.
 
-            The lower it is, the better the match. 
-            - 0 means the fact matches the query as well as the query matches itself.
-            - 1 means they are unrelated
-            - sqrt(2) means they are opposite facts. 
+            The higher it is, the better the match.
+            - 1 means the fact matches the query as well as the query matches itself.
+            - 0 means they are unrelated
+            - -1 means they are opposite facts.
 
-            Cosine distance measures semantic similarity, not whether the fact logically supports the answer.
-            A low distance does not establish a relationship absent from the fact. 
-            A high distance indicates weaker or negative cosine similarity, not definitive proof of irrelevance. Do not use distance alone to determine whether a fact answers the question.
+            Cosine similarity measures semantic similarity, not whether the fact logically supports the answer.
+            A high similarity does not establish a relationship absent from the fact.
+            A low similarity indicates weaker or negative cosine similarity, not definitive proof of irrelevance. Do not use similarity alone to determine whether a fact answers the question.
             """
     )
-    public var cosineDistance: Double?
+    public var cosineSimilarity: Double?
 }
 
 public struct MemoryEntry: Identifiable, Codable, Sendable {
