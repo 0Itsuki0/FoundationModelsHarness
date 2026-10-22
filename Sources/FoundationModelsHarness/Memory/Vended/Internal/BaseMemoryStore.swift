@@ -9,54 +9,48 @@ import Accelerate
 import FoundationModels
 import NaturalLanguage
 
-/// The base memory store logic that other SDK-provided store will be wrapping
-actor BaseMemoryStore {
+/// The base memory store logic that other SDK-provided stores will be wrapping.
+/// Matching logic: normalized-text match and cosine similarity.
+class BaseMemoryStore {
 
     private var addedMemories: [MemoryEntry] = []
 
-    /// Add a memory as a new entry only if the cosine distance is larger than `addThresholdDistance`,
+    /// Return an added memory as a search result only if the cosine similarity is larger than or equal to `similarityThreshold`,
+    /// aka: there is enough similarity to the query.
+    private let searchConfiguration: MemorySearchConfiguration
+
+    /// Add a memory as a new entry only if the cosine similarity to every existing entry is smaller than `addThresholdSimilarity`,
     /// aka: there is enough distinction to the existing entries.
     ///
-    /// - Distance = 0 (Similarity = 1): The vectors point in the exact same direction. They are perfectly identical in orientation.
-    /// - Distance < 1 (Similarity > 0): The vectors point in a similar direction. The angle between them is acute (less than 90 degrees).
-    /// - Distance = 1 (Similarity = 0): The vectors are orthogonal (perpendicular). They are completely independent and share no relationship or directional similarity (a 90-degree angle).
-    /// - Distance > 1 (Similarity < 0): The vectors point in opposite directions. The angle between them is obtuse (greater than 90 degrees).
-    /// - Distance = sqrt(2) (Similarity = -1): The vectors point in the exact opposite direction (a 180-degree angle).
+    /// - Similarity = 1: The vectors point in the exact same direction. They are perfectly identical in orientation.
+    /// - Similarity > 0: The vectors point in a similar direction. The angle between them is acute (less than 90 degrees).
+    /// - Similarity = 0: The vectors are orthogonal (perpendicular). They are completely independent and share no relationship or directional similarity (a 90-degree angle).
+    /// - Similarity < 0: The vectors point in opposite directions. The angle between them is obtuse (greater than 90 degrees).
+    /// - Similarity = -1: The vectors point in the exact opposite direction (a 180-degree angle).
     ///
-    /// However,`NaturalLanguage` embedding seems to weight more on repetitive phrases and usually result in a larger distance than expected.
-    private let addThresholdDistance: Double = 1.0
+    /// However,`NaturalLanguage` embedding seems to weight more on repetitive phrases and usually result in a lower similarity than expected.
+    private let addThresholdSimilarity: Double?
 
-    /// Return an added memory as a search result only if the cosine distance is less than or equal to `searchThresholdDistance`,
-    /// aka: there is enough similarity to the query.
-    private let searchConfiguration: MemorySearchConfiguration = .init(
-        distanceThreshold: 1.2
-    )
+    /// A memory will be removed if its similarity to the new entry is smaller than `removeThresholdSimilarity`,
+    /// aka: they point in the (nearly) opposite direction.
+    private let removeThresholdSimilarity: Double?
 
-    /// A memory will be removed if its distance to the new entry is larger than `removeThresholdDistance`,
-    /// aka: they point in the opposite direction.
-    /// Since we are taking sqrt to the textbook Cosine distance, the full-contradictory distance becomes sqrt(2), or 1.41421356237
-    private let removeThresholdDistance: Double = 1.38
+    private let maxUnusedDays: Int?
 
-    private let exactMatchDistance: Double = 0.0
+    private let exactMatchSimilarity: Double = 1.0
 
-    private let maxUnusedDays: Int = 30
+    init(
+        storeConfiguration: MemoryStoreConfiguration,
+        existingMemories: [MemoryEntry]
+    ) {
+        self.addedMemories = existingMemories
+        self.searchConfiguration = storeConfiguration.searchConfiguration
+        self.addThresholdSimilarity = storeConfiguration.addThresholdSimilarity
+        self.removeThresholdSimilarity =
+            storeConfiguration.removeThresholdSimilarity
+        self.maxUnusedDays = storeConfiguration.maxUnusedDays
 
-    init(memories: [MemoryEntry]) {
-        self.addedMemories = memories
-        Task {
-            await self.removeUnused(memories)
-        }
-    }
-
-    private func removeUnused(_ memories: [MemoryEntry]) {
-        let now = Date()
-        let threshold = Double(self.maxUnusedDays) * 60 * 60 * 24
-        let memories = memories.filter({
-            let lastUsed = $0.lastUsed ?? $0.createdAt
-            let distance = lastUsed.distance(to: now)
-            return distance < threshold
-        })
-        self.addedMemories = memories
+        self.removeUnused()
     }
 
     /// add an entry to memory
@@ -73,25 +67,29 @@ actor BaseMemoryStore {
             )
             return .success
         }
-        /// Calculating distance to existing entries.
-        let existingDistances = calculateDistances(
+        /// Calculating similarity to existing entries.
+        let existingSimilarities = calculateSimilarities(
             base: self.addedMemories,
             queryEmbedding: newEmbedding
         )
 
         /// remove ones that are pointing in the opposite direction.
-        let oppositeMemories = existingDistances.filter({
-            $0.1 > self.removeThresholdDistance
-        }).map(\.0)
-
-        self.removeOppositeMemories(oppositeMemories.map(\.id))
+        if let removeThresholdSimilarity {
+            let oppositeMemories = existingSimilarities.filter({
+                $0.1 < removeThresholdSimilarity
+            }).map(\.0)
+            self.deleteMemories(oppositeMemories.map(\.id))
+        }
 
         /// similar entries exist. return.
-        if existingDistances.contains(where: {
-            $0.1 <= self.addThresholdDistance
-        }) {
+        if let addThresholdSimilarity,
+            existingSimilarities.contains(where: {
+                $0.1 >= addThresholdSimilarity
+            })
+        {
             return .success
         }
+
         self.addedMemories.append(
             .init(
                 category: memory.category,
@@ -109,7 +107,7 @@ actor BaseMemoryStore {
         let exactMatch: [(MemoryEntry, Double?)] = findExactMatch(
             base: self.addedMemories,
             to: query
-        ).map({ ($0, exactMatchDistance) })
+        ).map({ ($0, exactMatchSimilarity) })
 
         var base =
             searchQuery.categories.isEmpty
@@ -131,13 +129,13 @@ actor BaseMemoryStore {
             )
         }
 
-        let distances = calculateDistances(
+        let similarities = calculateSimilarities(
             base: base,
             queryEmbedding: queryEmbedding
         )
 
         let similarMemories = applySearchConfig(
-            to: distances,
+            to: similarities,
             categories: searchQuery.categories
         )
 
@@ -146,7 +144,23 @@ actor BaseMemoryStore {
         )
     }
 
-    /// results: - an array of category-filtered memories, cosine distance
+    func deleteMemories(_ memories: [MemoryEntry.ID]) {
+        self.addedMemories.removeAll(where: { memories.contains($0.id) })
+    }
+
+    private func removeUnused() {
+        guard let maxUnusedDays else { return }
+        let now = Date()
+        let threshold = Double(maxUnusedDays) * 60 * 60 * 24
+        let memories = addedMemories.filter({
+            let lastUsed = $0.lastUsed ?? $0.createdAt
+            let distance = lastUsed.distance(to: now)
+            return distance < threshold
+        })
+        self.addedMemories = memories
+    }
+
+    /// results: - an array of category-filtered memories, cosine similarity
     private func applySearchConfig(
         to results: [(MemoryEntry, Double)],
         categories: [Category]
@@ -154,12 +168,12 @@ actor BaseMemoryStore {
         -> [(MemoryEntry, Double)]
     {
         var final = results.sorted {
-            $0.1 < $1.1
+            $0.1 > $1.1
         }
 
-        if let distanceThreshold = searchConfiguration.distanceThreshold {
+        if let similarityThreshold = searchConfiguration.similarityThreshold {
             final = final.filter({
-                if $0.1 <= distanceThreshold {
+                if $0.1 >= similarityThreshold {
                     return true
                 }
                 return false
@@ -184,7 +198,7 @@ actor BaseMemoryStore {
 
     private func prepareForSearchResult(
         for memory: MemoryEntry,
-        distance: Double?
+        similarity: Double?
     )
         -> MemorySearchResult
     {
@@ -197,12 +211,8 @@ actor BaseMemoryStore {
             id: memory.id.uuidString,
             category: memory.category,
             fact: memory.fact,
-            cosineDistance: distance
+            cosineSimilarity: similarity
         )
-    }
-
-    private func removeOppositeMemories(_ memories: [MemoryEntry.ID]) {
-        self.addedMemories.removeAll(where: { memories.contains($0.id) })
     }
 
     private func findExactMatch(base: [MemoryEntry], to query: String)
@@ -223,26 +233,7 @@ actor BaseMemoryStore {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func calculateDistances(
-        base: [MemoryEntry],
-        queryEmbedding: [Double]?
-    )
-        -> [(MemoryEntry, Double)]
-    {
-        guard let queryEmbedding else { return [] }
-
-        var distances: [(MemoryEntry, Double)] = []
-        base.forEach {
-            if let distance = calculateDistance(
-                $0.embeddings,
-                b: queryEmbedding
-            ) {
-                distances.append(($0, distance))
-            }
-        }
-        return distances
-    }
-
+    // MARK: - Embedding
     private func calculateEmbedding(_ query: String) -> [Double]? {
         return getNLEmbeddingInstance()?.vector(for: query)
     }
@@ -260,25 +251,45 @@ actor BaseMemoryStore {
         return NLEmbedding.sentenceEmbedding(for: .english)
     }
 
-    private func calculateDistance(_ a: [Double]?, b: [Double]?) -> Double? {
-        guard let a, let b else { return nil }
-        return calculateCosineDistance(a, b)
+    // MARK: - cosine similarity
+    private func calculateSimilarities(
+        base: [MemoryEntry],
+        queryEmbedding: [Double]?
+    )
+        -> [(MemoryEntry, Double)]
+    {
+        guard let queryEmbedding else { return [] }
+
+        var similarities: [(MemoryEntry, Double)] = []
+        base.forEach {
+            if let similarity = calculateSimilarity(
+                $0.embeddings,
+                b: queryEmbedding
+            ) {
+                similarities.append(($0, similarity))
+            }
+        }
+        return similarities
     }
 
-    /// Calculate cosine distance between two vector
-    /// (mirroring `NLEmbedding.distance`'s calculation which is different from the standard textbook formula)
+    private func calculateSimilarity(_ a: [Double]?, b: [Double]?) -> Double? {
+        guard let a, let b else { return nil }
+        return calculateCosineSimilarity(a, b)
+    }
+
+    /// Calculate cosine similarity between two vector
     ///
-    /// Returning: cosine distance ranges between 0 and 2.
+    /// Returning: cosine similarity ranges between -1 and 1.
     ///
-    /// - Distance = 0 (Similarity = 1): The vectors point in the exact same direction. They are perfectly identical in orientation.
-    /// - Distance < 1 (Similarity > 0): The vectors point in a similar direction. The angle between them is acute (less than 90 degrees).
-    /// - Distance = 1 (Similarity = 0): The vectors are orthogonal (perpendicular). They are completely independent and share no relationship or directional similarity (a 90-degree angle).
-    /// - Distance > 1 (Similarity < 0): The vectors point in opposite directions. The angle between them is obtuse (greater than 90 degrees).
-    /// - Distance = sqrt(2) (Similarity = -1): The vectors point in the exact opposite direction (a 180-degree angle).
+    /// - Similarity = 1: The vectors point in the exact same direction. They are perfectly identical in orientation.
+    /// - Similarity > 0: The vectors point in a similar direction. The angle between them is acute (less than 90 degrees).
+    /// - Similarity = 0: The vectors are orthogonal (perpendicular). They are completely independent and share no relationship or directional similarity (a 90-degree angle).
+    /// - Similarity < 0: The vectors point in opposite directions. The angle between them is obtuse (greater than 90 degrees).
+    /// - Similarity = -1: The vectors point in the exact opposite direction (a 180-degree angle).
     ///
     /// Why not using `NLEmbedding.distance`
-    /// we don't want to calculate the vector for both the stored memory and the query for every single distance calculation.
-    private func calculateCosineDistance(_ a: [Double], _ b: [Double])
+    /// we don't want to calculate the vector for both the stored memory and the query for every single similarity calculation.
+    private func calculateCosineSimilarity(_ a: [Double], _ b: [Double])
         -> Double?
     {
         guard a.count == b.count else {
@@ -298,16 +309,9 @@ actor BaseMemoryStore {
         }
 
         /// standard Cosine Similarity clamped to valid math boundaries [-1, 1]
-        let cosineSimilarity = max(
+        return max(
             -1.0,
             min(1.0, dotProduct / (magnitudeA * magnitudeB))
         )
-
-        ///Textbook Cosine Distance
-        let standardCosineDistance = 1.0 - cosineSimilarity
-
-        /// Apple NaturalLanguage Framework Transformation (Euclidean distance of unit vectors)
-        /// For orthogonal vectors where similarity is 0, this yields sqrt(2) ≈ 1.4142
-        return sqrt(2.0 * standardCosineDistance)
     }
 }

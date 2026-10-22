@@ -8,24 +8,24 @@
 import Foundation
 import FoundationModels
 
-/// No `identity` related category as those are application logic instead of something to be saved as long-term memory
 @Generable(description: "Categories for long-term memory.")
 public enum Category: Codable, Sendable {
     /// About the user
+    case identity
     case preferences
 
-    ///About the work
+    /// About the work
     case project
 
-    /// About the world
+    /// About the world / relationship
     case people
 
-    /// events
+    /// tasks
     case tasks
 }
 
 @Generable(description: "Fact to save to LLM's memory.")
-public struct MemoryEntryPartial {
+public struct MemoryEntryPartial: Sendable {
     @Guide(
         description: "Categories for the fact."
     )
@@ -40,13 +40,13 @@ public struct MemoryEntryPartial {
 }
 
 @Generable()
-public enum AddMemoryResult {
+public enum AddMemoryResult: Sendable {
     case success
     case failed(String)
 }
 
 @Generable()
-public struct MemorySearchInput {
+public struct MemorySearchInput: Sendable {
     @Guide(
         description: """
             Categories for long-term memory.
@@ -66,7 +66,7 @@ public struct MemorySearchInput {
 }
 
 @Generable()
-public struct MemorySearchResult {
+public struct MemorySearchResult: Sendable {
     public var id: String
 
     @Guide(
@@ -112,7 +112,7 @@ public struct MemoryEntry: Identifiable, Codable, Sendable {
     /// nil if failed. in this case, will only be matched based on category
     public var embeddings: [Double]?
 
-    init(
+    public init(
         category: Category,
         fact: String,
         embeddings: [Double]?
