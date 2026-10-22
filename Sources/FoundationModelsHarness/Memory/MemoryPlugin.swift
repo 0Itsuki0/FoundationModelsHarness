@@ -82,94 +82,6 @@ public protocol MemoryExtractor {
 //    let metadata: [String: JSONValue]?
 //}
 
-public class LanguageModelExtractor /*: MemoryExtractor*/ {
-    public static let defaultInstruction = """
-        You extract durable facts worth remembering across future conversations from a transcript.
-
-        **RULE**:
-        - Return ONLY a JSON array of objects, each: {"content": string}. 
-        - Each object is one discrete, self-contained fact (a preference, decision, or stable detail about the user or task). 
-        - Do **not** include transient chit-chat, questions, or anything already obvious. 
-        - If there is nothing worth remembering, return [].
-        """
-
-    public typealias DefaultOutput = [String]
-
-    //    public struct StructuredOutput {
-    //        let schema: GenerationSchema
-    //        let convert: (GeneratedContent) throws -> [ExtractionResult]
-    //
-    //        init(
-    //            schema: GenerationSchema = DefaultOutput.self.generationSchema,
-    //            convert: @escaping (GeneratedContent) throws -> [ExtractionResult] =
-    //                {
-    //                    rawContent in
-    //                    let value: DefaultOutput = try rawContent.value()
-    //                    return value.map({
-    //                        ExtractionResult(content: $0, metadata: nil)
-    //                    })
-    //                }
-    //        ) {
-    //            self.schema = schema
-    //            self.convert = convert
-    //        }
-    //    }
-    //
-    //    public struct Structured<T:ConvertibleFromGeneratedContent> {
-    //        let type: T
-    //        let convert: (T) throws -> [ExtractionResult]
-    //
-    //        init(
-    //            type: T = DefaultOutput.self,
-    //            convert: @escaping (GeneratedContent) throws -> [ExtractionResult] =
-    //            {
-    //                rawContent in
-    //                let value: DefaultOutput = try rawContent.value()
-    //                return value.map({
-    //            ExtractionResult(content: $0, metadata: nil)
-    //        })
-    //            }
-    //        ) {
-    //            self.schema = schema
-    //            self.convert = convert
-    //        }
-    //    }
-
-    private let session: LanguageModelSession
-
-    init(
-        model: any LanguageModel = SystemLanguageModel(),
-        instruction: Instructions = Instructions {
-            LanguageModelExtractor.defaultInstruction
-        },
-        //        structuredOutput: StructuredOutput = StructuredOutput()
-    ) {
-        self.session = LanguageModelSession(
-            model: model,
-            instructions: instruction
-        )
-    }
-
-    public func extractMemory(from messages: [Transcript.Entry])
-        async throws  //        -> [ExtractionResult]
-    {
-        /// Not using the Agent wrapper here since it is just one turn call without tools / retries.
-        self.clearSessionHistory()
-
-        return
-    }
-
-    private func buildPrompt(from messages: [Transcript.Entry]) -> String {
-        return messages.map(\.description).joined(separator: "\n")
-    }
-
-    /// remove all conversational entries
-    private func clearSessionHistory() {
-        self.session.transcript.history.removeAll()
-    }
-}
-
-
 /// JSON File MemoryStore: An entry per fact: {category, fact, ts}
 ///
 /// Categories:
@@ -196,32 +108,34 @@ public class LanguageModelExtractor /*: MemoryExtractor*/ {
 /// - events: things that happened, with dates
 /// - tasks: open to-dos and follow-ups
 class FileMemoryStore {
-    
-    @Generable(description: """
-    Categories for agent long-term memory:
-    About the user
-    - identity: name, role, timezone, language
-    - preferences: style, formatting, tools, tone
-    - goals: what they're working toward
-    - constraints: things to avoid, hard rules
-    - feedback: corrections given to the agent
 
-    About the work
-    - project: architecture, stack, key files, status
-    - conventions: code style, naming, team norms
-    - decisions: choices made and why
-    - procedures: how to do recurring tasks (deploy, release, test)
-    - issues: known bugs, gotchas, workarounds
+    @Generable(
+        description: """
+            Categories for agent long-term memory:
+            About the user
+            - identity: name, role, timezone, language
+            - preferences: style, formatting, tools, tone
+            - goals: what they're working toward
+            - constraints: things to avoid, hard rules
+            - feedback: corrections given to the agent
 
-    About the world
-    - people: teammates, contacts, who owns what
-    - references: URLs, docs, dashboards, tickets
-    - facts: general knowledge that doesn't fit elsewhere
+            About the work
+            - project: architecture, stack, key files, status
+            - conventions: code style, naming, team norms
+            - decisions: choices made and why
+            - procedures: how to do recurring tasks (deploy, release, test)
+            - issues: known bugs, gotchas, workarounds
 
-    About time
-    - events: things that happened, with dates
-    - tasks: open to-dos and follow-ups
-    """)
+            About the world
+            - people: teammates, contacts, who owns what
+            - references: URLs, docs, dashboards, tickets
+            - facts: general knowledge that doesn't fit elsewhere
+
+            About time
+            - events: things that happened, with dates
+            - tasks: open to-dos and follow-ups
+            """
+    )
     enum Category: String, Codable {
         /// About the user
         case identity
@@ -229,7 +143,7 @@ class FileMemoryStore {
         case goals
         case constraints
         case feedback
-        
+
         ///About the work
         case project
         case conventions
@@ -241,15 +155,72 @@ class FileMemoryStore {
         case people
         case references
         case facts
-        
+
         /// About time
         case events
         case tasks
     }
 }
 
-
-
 /// SQLite + FTS5 MemoryStore
 class SQLiteMemoryStore {}
 
+struct AddMemoryTool<
+    Arguments: Generable,
+    Output: PromptRepresentable
+>: Tool {
+    var name = "add_llm_memory"
+    var description = """
+        Save information to **Assistant's** long-term memory for recall in future conversations.
+        - Save multi-word, concise, self-contained fact that preserves its original meaning and important relationships. NEVER Sentence.
+        """
+
+    let includesSchemaInInstructions: Bool = true
+
+    private let call: @Sendable (Self.Arguments) async throws -> Self.Output
+
+    init(
+        call: @escaping @Sendable (Self.Arguments) async throws -> Self.Output,
+        nameOverride: String? = nil,
+        descriptionOverride: String? = nil
+    ) {
+        self.call = call
+
+        if let nameOverride { self.name = nameOverride }
+        if let descriptionOverride { self.description = descriptionOverride }
+    }
+
+    func call(arguments: Arguments) async throws -> Output {
+        return try await self.call(arguments)
+    }
+}
+
+struct SearchMemoryTool<
+    Arguments: Generable,
+    Output: PromptRepresentable
+>: Tool {
+    var name = "search_user_info"
+    var description = """
+        Look up user-related information such as preferences, rules, relationships.
+        - Search with multi-word query. NEVER Sentence.
+        """
+
+    let includesSchemaInInstructions: Bool = true
+
+    private let call: @Sendable (Self.Arguments) async throws -> Self.Output
+
+    init(
+        call: @escaping @Sendable (Self.Arguments) async throws -> Self.Output,
+        nameOverride: String? = nil,
+        descriptionOverride: String? = nil
+    ) {
+        self.call = call
+
+        if let nameOverride { self.name = nameOverride }
+        if let descriptionOverride { self.description = descriptionOverride }
+    }
+
+    func call(arguments: Arguments) async throws -> Output {
+        return try await self.call(arguments)
+    }
+}

@@ -15,6 +15,12 @@ let package = Package(
             targets: ["FoundationModelsHarness"]
         ),
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/groue/GRDB.swift.git",
+            branch: "master",
+        )
+    ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
@@ -24,10 +30,21 @@ let package = Package(
                 .enableUpcomingFeature("ApproachableConcurrency"),
             ],
         ),
+        .target(
+            name: "SQLiteStore",
+            dependencies: [
+                "FoundationModelsHarness",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            swiftSettings: [
+                .enableUpcomingFeature("ApproachableConcurrency"),
+            ],
+        ),
         .executableTarget(
             name: "Examples",
             dependencies: [
-                "FoundationModelsHarness"
+                "FoundationModelsHarness",
+                .product(name: "GRDB", package: "GRDB.swift")
             ],
             path: "Examples"
         ),
