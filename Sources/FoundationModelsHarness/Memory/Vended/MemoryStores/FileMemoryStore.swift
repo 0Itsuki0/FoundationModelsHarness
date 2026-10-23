@@ -10,6 +10,54 @@ import FoundationModels
 
 /// File memory store to store entries in a JSON file.
 public actor FileMemoryStore: MemoryStore {
+    actor MemoryProvider: BaseMemoryStore.MemoryProvider {
+        private let fileURL: URL
+        private let encoder = JSONEncoder()
+        private let decoder = JSONDecoder()
+
+        init(fileURL: URL) {
+            self.fileURL = fileURL
+        }
+
+        func addMemories(_ memories: [MemoryEntry]) throws {
+            try self.upsertMemories(memories)
+        }
+
+        func updateMemories(_ memories: [MemoryEntry]) throws {
+            try self.upsertMemories(memories)
+        }
+
+        private func upsertMemories(_ memories: [MemoryEntry]) throws {
+            var current = try self.getMemories()
+            current.removeAll(where: { memories.map(\.id).contains($0.id) })
+            current.append(contentsOf: memories)
+            try self.saveMemories(current)
+        }
+
+        func deleteMemories(_ memories: [MemoryEntry.ID]) throws {
+            var current = try self.getMemories()
+            current.removeAll(where: { memories.contains($0.id) })
+            try self.saveMemories(current)
+        }
+
+        func getMemories() throws -> [MemoryEntry] {
+            guard FileManager.default.fileExists(atPath: fileURL.path()) else {
+                return []
+            }
+            let data = try Data(contentsOf: fileURL)
+            let memories = try self.decoder.decode(
+                [MemoryEntry].self,
+                from: data
+            )
+            return memories
+        }
+
+        private func saveMemories(_ memories: [MemoryEntry]) throws {
+            let data = try encoder.encode(memories)
+            try data.write(to: fileURL)
+        }
+    }
+
     private let baseStore: BaseMemoryStore
     private let fileURL: URL
 
@@ -22,22 +70,17 @@ public actor FileMemoryStore: MemoryStore {
     ///
     /// - Parameters:
     ///  - fileURL: File URL to save the memory entry
+    ///  - storeConfiguration :memory store configurations
     public init(
         fileURL: URL = URL.applicationDirectory.appending(path: "memory.json"),
         storeConfiguration: MemoryStoreConfiguration = .init(),
         existingMemories: [MemoryEntry] = []
-    ) throws {
+    ) {
         self.fileURL = fileURL
-        let baseStore = BaseMemoryStore(
-            storeConfiguration: .init(),
-            existingMemories: try Self.loadMemory(from: fileURL),
+        self.baseStore = BaseMemoryStore(
+            storeConfiguration: storeConfiguration,
+            memoryProvider: MemoryProvider(fileURL: fileURL)
         )
-
-        self.baseStore = baseStore
-
-        Task {
-            await self.setupStoreUpdateListener()
-        }
     }
 
     public func addMemory(_ memory: MemoryEntryPartial) async -> AddMemoryResult
@@ -51,40 +94,19 @@ public actor FileMemoryStore: MemoryStore {
         return await baseStore.searchMemory(searchQuery)
     }
 
-    public func addMemories(_ memories: [MemoryEntry]) async {
-        let _ = await baseStore.addMemories(memories)
+    public func getMemories() async throws -> [MemoryEntry] {
+        try await baseStore.getMemories()
     }
 
-    public func deleteMemories(_ memories: [MemoryEntry.ID]) async {
-        await baseStore.deleteMemories(memories)
+    public func addMemories(_ memories: [MemoryEntry]) async throws {
+        try await baseStore.addMemories(memories)
     }
 
-    private static func loadMemory(from fileURL: URL) throws -> [MemoryEntry] {
-        guard FileManager.default.fileExists(atPath: fileURL.path()) else {
-            return []
-        }
-        let data = try Data(contentsOf: fileURL)
-        let memories = try self.decoder.decode([MemoryEntry].self, from: data)
-        return memories
+    public func updateMemories(_ memories: [MemoryEntry]) async throws {
+        try await baseStore.updateMemories(memories)
     }
 
-    private static func saveMemories(_ memories: [MemoryEntry], to fileURL: URL)
-        throws
-    {
-
-    }
-
-    private func setupStoreUpdateListener() {
-        self.storeUpdateTask = Task {
-            for await event in baseStore.storeUpdateStream {
-                self.handleStoreUpdate(event)
-            }
-        }
-    }
-
-    private func handleStoreUpdate(
-        _ event: BaseMemoryStore.MemoryStoreUpdate
-    ) {
-        print(#function, event)
+    public func deleteMemories(_ memories: [MemoryEntry.ID]) async throws {
+        try await baseStore.deleteMemories(memories)
     }
 }

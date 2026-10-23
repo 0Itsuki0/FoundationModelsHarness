@@ -106,7 +106,8 @@ public struct MemorySearchResult: Sendable {
     public var cosineSimilarity: Double?
 }
 
-public struct MemoryEntry: Identifiable, Codable, Sendable, Equatable, Hashable
+public struct MemoryEntry: Identifiable, Codable, Sendable, Equatable, Hashable,
+    CustomStringConvertible
 {
     public var id = UUID()
 
@@ -126,5 +127,15 @@ public struct MemoryEntry: Identifiable, Codable, Sendable, Equatable, Hashable
         self.category = category
         self.fact = fact
         self.embeddings = embeddings
+    }
+
+    public var description: String {
+        """
+        MemoryEntry (id: \(id))
+        - Category: \(category)
+        - fact: \(fact)
+        - created at: \(createdAt)
+        - last used: \(lastUsed, default: "(none)")
+        """
     }
 }

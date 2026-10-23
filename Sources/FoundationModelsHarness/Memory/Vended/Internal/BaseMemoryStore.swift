@@ -15,39 +15,12 @@ final class BaseMemoryStore: Sendable {
 
     protocol MemoryProvider: Sendable {
         func getMemories() async throws -> [MemoryEntry]
-        func setMemories(_ memories: [MemoryEntry]) async throws
-        func updateMemory(_ update: MemoryStoreUpdate) async throws
+        func addMemories(_ memories: [MemoryEntry]) async throws
+        func updateMemories(_ memories: [MemoryEntry]) async throws
+        func deleteMemories(_ memories: [MemoryEntry.ID]) async throws
     }
 
-    struct MemoryStoreUpdate: Sendable {
-        var add: [MemoryEntry]
-        var delete: [MemoryEntry.ID]
-    }
-
-    actor MemoryActor {
-        private(set) var addedMemories: [MemoryEntry]
-        init(addedMemories: [MemoryEntry] = []) {
-            self.addedMemories = addedMemories
-        }
-
-        func updateMemory(_ update: MemoryStoreUpdate) {
-            self.addedMemories.removeAll(where: {
-                update.add.map(\.id).contains($0.id)
-            })
-            self.addedMemories.append(contentsOf: update.add)
-            self.addedMemories.removeAll(where: {
-                update.delete.contains($0.id)
-            })
-        }
-    }
-
-    private let memoryActor: MemoryActor
-
-    private var addedMemories: [MemoryEntry] {
-        get async {
-            await memoryActor.addedMemories
-        }
-    }
+    private let memoryProvider: MemoryProvider
 
     /// Return an added memory as a search result only if the cosine similarity is larger than or equal to `similarityThreshold`,
     /// aka: there is enough similarity to the query.
@@ -73,14 +46,12 @@ final class BaseMemoryStore: Sendable {
 
     private let exactMatchSimilarity: Double = 1.0
 
-    let storeUpdateStream: AsyncStream<MemoryStoreUpdate>
-    let storeUpdateContinuation: AsyncStream<MemoryStoreUpdate>.Continuation
-
     init(
         storeConfiguration: MemoryStoreConfiguration,
-        existingMemories: [MemoryEntry],
+        //        existingMemories: [MemoryEntry],
+        memoryProvider: MemoryProvider
     ) {
-        self.memoryActor = MemoryActor(addedMemories: existingMemories)
+        self.memoryProvider = memoryProvider
 
         self.searchConfiguration = storeConfiguration.searchConfiguration
         self.addThresholdSimilarity = storeConfiguration.addThresholdSimilarity
@@ -88,26 +59,49 @@ final class BaseMemoryStore: Sendable {
             storeConfiguration.removeThresholdSimilarity
         self.maxUnusedDays = storeConfiguration.maxUnusedDays
 
-        (storeUpdateStream, storeUpdateContinuation) = AsyncStream.makeStream(
-            of: MemoryStoreUpdate.self
-        )
-
         Task {
             await self.removeUnused()
         }
+    }
+    
+    // MARK: - Re-exposing provider's implementations
+    func getMemories() async throws -> [MemoryEntry] {
+        try await self.memoryProvider.getMemories()
+    }
+    
+    func addMemories(_ memories: [MemoryEntry]) async throws {
+        guard !memories.isEmpty else { return }
+        try await self.memoryProvider.addMemories(memories)
+    }
+    
+    func updateMemories(_ memories: [MemoryEntry]) async throws {
+        guard !memories.isEmpty else { return }
+        try await self.memoryProvider.updateMemories(memories)
+    }
+    
+    func deleteMemories(
+        _ memories: [MemoryEntry.ID]
+    ) async throws {
+        guard !memories.isEmpty else { return }
+        try await self.memoryProvider.deleteMemories(memories)
     }
 
     /// add an entry to memory
     /// Always returning `success` because even when there is a similar memory already added, it is not necessarily a failure that the LLM needs to know
     func addMemory(_ memory: MemoryEntryPartial) async -> AddMemoryResult {
-        let addedMemories = await self.addedMemories
+        let addedMemories: [MemoryEntry]
+        do {
+            addedMemories = try await self.memoryProvider.getMemories()
+        } catch {
+            return .failed(error.localizedDescription)
+        }
         let query = memory.fact
         let newEmbedding = calculateEmbedding(query)
         guard let newEmbedding else {
             if !findExactMatch(base: addedMemories, to: query).isEmpty {
                 return .success
             }
-            return await self.addMemories([
+            return await self._addMemories([
                 .init(category: memory.category, fact: query, embeddings: nil)
             ])
         }
@@ -123,7 +117,15 @@ final class BaseMemoryStore: Sendable {
                 $0.1 < removeThresholdSimilarity
             }).map(\.0)
             // best effort delete
-            await self.deleteMemories(oppositeMemories.map(\.id))
+            do {
+                try await self.deleteMemories(oppositeMemories.map(\.id))
+            } catch {
+                print(
+                    #function,
+                    "Remove opposite memory error: ",
+                    error.localizedDescription
+                )
+            }
         }
 
         /// similar entries exist. return.
@@ -135,7 +137,7 @@ final class BaseMemoryStore: Sendable {
             return .success
         }
 
-        return await self.addMemories([
+        return await self._addMemories([
             .init(
                 category: memory.category,
                 fact: query,
@@ -148,7 +150,12 @@ final class BaseMemoryStore: Sendable {
     func searchMemory(_ searchQuery: MemorySearchInput) async
         -> [MemorySearchResult]
     {
-        let addedMemories = await self.addedMemories
+        let addedMemories: [MemoryEntry]
+        do {
+            addedMemories = try await self.memoryProvider.getMemories()
+        } catch {
+            return []
+        }
 
         let query = searchQuery.query
         let queryEmbedding = calculateEmbedding(query)
@@ -192,27 +199,28 @@ final class BaseMemoryStore: Sendable {
         )
     }
 
-    func addMemories(_ memories: [MemoryEntry]) async -> AddMemoryResult {
+    private func _addMemories(_ memories: [MemoryEntry]) async -> AddMemoryResult
+    {
         guard !memories.isEmpty else { return .success }
 
-        let update = MemoryStoreUpdate(add: memories, delete: [])
-        self.storeUpdateContinuation.yield(update)
-        await self.memoryActor.updateMemory(update)
-        return .success
+        do {
+            try await self.addMemories(memories)
+            return .success
+        } catch {
+            return .failed(error.localizedDescription)
+        }
     }
 
-    func deleteMemories(
-        _ memories: [MemoryEntry.ID]
-    ) async {
-        guard !memories.isEmpty else { return }
-        let update = MemoryStoreUpdate(add: [], delete: memories)
-        self.storeUpdateContinuation.yield(update)
-        await self.memoryActor.updateMemory(update)
-    }
-
+    /// best effort
     private func removeUnused() async {
         guard let maxUnusedDays else { return }
-        let addedMemories = await self.addedMemories
+        let addedMemories: [MemoryEntry]
+        do {
+            addedMemories = try await self.memoryProvider.getMemories()
+        } catch {
+            print(#function, error)
+            return
+        }
         let now = Date()
         let threshold = Double(maxUnusedDays) * 60 * 60 * 24
         let memories = addedMemories.filter {
@@ -222,8 +230,12 @@ final class BaseMemoryStore: Sendable {
         }
         let diff = Set(addedMemories.map(\.id)).subtracting(memories.map(\.id))
 
-        await deleteMemories(Array(diff))
-        await self.memoryActor.updateMemory(.init(add: [], delete: Array(diff)))
+        do {
+            try await deleteMemories(Array(diff))
+        } catch {
+            print(#function, error)
+            return
+        }
     }
 
     /// results: - an array of category-filtered memories, cosine similarity
@@ -273,9 +285,17 @@ final class BaseMemoryStore: Sendable {
                 )
             )
         }
-        await self.memoryActor.updateMemory(
-            .init(add: updatedMemories, delete: [])
-        )
+        /// best effort update on last used date
+        do {
+            try await self.updateMemories(updatedMemories)
+        } catch {
+            print(
+                #function,
+                "Update lastUsed error: ",
+                error.localizedDescription
+            )
+        }
+
         return searchResult
     }
 
