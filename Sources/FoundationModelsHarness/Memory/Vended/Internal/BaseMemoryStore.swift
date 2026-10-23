@@ -11,9 +11,37 @@ import NaturalLanguage
 
 /// The base memory store logic that other SDK-provided stores will be wrapping.
 /// Matching logic: normalized-text match and cosine similarity.
-class BaseMemoryStore {
+final class BaseMemoryStore: Sendable {
 
-    private var addedMemories: [MemoryEntry] = []
+    struct MemoryStoreUpdate: Sendable {
+        var add: [MemoryEntry]
+        var delete: [MemoryEntry.ID]
+    }
+
+    actor MemoryActor {
+        private(set) var addedMemories: [MemoryEntry]
+        init(addedMemories: [MemoryEntry] = []) {
+            self.addedMemories = addedMemories
+        }
+
+        func updateMemory(_ update: MemoryStoreUpdate) {
+            self.addedMemories.removeAll(where: {
+                update.add.map(\.id).contains($0.id)
+            })
+            self.addedMemories.append(contentsOf: update.add)
+            self.addedMemories.removeAll(where: {
+                update.delete.contains($0.id)
+            })
+        }
+    }
+
+    private let memoryActor: MemoryActor
+
+    private var addedMemories: [MemoryEntry] {
+        get async {
+            await memoryActor.addedMemories
+        }
+    }
 
     /// Return an added memory as a search result only if the cosine similarity is larger than or equal to `similarityThreshold`,
     /// aka: there is enough similarity to the query.
@@ -39,37 +67,47 @@ class BaseMemoryStore {
 
     private let exactMatchSimilarity: Double = 1.0
 
+    let storeUpdateStream: AsyncStream<MemoryStoreUpdate>
+    let storeUpdateContinuation: AsyncStream<MemoryStoreUpdate>.Continuation
+
     init(
         storeConfiguration: MemoryStoreConfiguration,
-        existingMemories: [MemoryEntry]
+        existingMemories: [MemoryEntry],
     ) {
-        self.addedMemories = existingMemories
+        self.memoryActor = MemoryActor(addedMemories: existingMemories)
+
         self.searchConfiguration = storeConfiguration.searchConfiguration
         self.addThresholdSimilarity = storeConfiguration.addThresholdSimilarity
         self.removeThresholdSimilarity =
             storeConfiguration.removeThresholdSimilarity
         self.maxUnusedDays = storeConfiguration.maxUnusedDays
 
-        self.removeUnused()
+        (storeUpdateStream, storeUpdateContinuation) = AsyncStream.makeStream(
+            of: MemoryStoreUpdate.self
+        )
+
+        Task {
+            await self.removeUnused()
+        }
     }
 
     /// add an entry to memory
     /// Always returning `success` because even when there is a similar memory already added, it is not necessarily a failure that the LLM needs to know
-    func addMemory(_ memory: MemoryEntryPartial) -> AddMemoryResult {
+    func addMemory(_ memory: MemoryEntryPartial) async -> AddMemoryResult {
+        let addedMemories = await self.addedMemories
         let query = memory.fact
         let newEmbedding = calculateEmbedding(query)
         guard let newEmbedding else {
-            if !findExactMatch(base: self.addedMemories, to: query).isEmpty {
+            if !findExactMatch(base: addedMemories, to: query).isEmpty {
                 return .success
             }
-            self.addedMemories.append(
+            return await self.addMemories([
                 .init(category: memory.category, fact: query, embeddings: nil)
-            )
-            return .success
+            ])
         }
         /// Calculating similarity to existing entries.
         let existingSimilarities = calculateSimilarities(
-            base: self.addedMemories,
+            base: addedMemories,
             queryEmbedding: newEmbedding
         )
 
@@ -78,7 +116,8 @@ class BaseMemoryStore {
             let oppositeMemories = existingSimilarities.filter({
                 $0.1 < removeThresholdSimilarity
             }).map(\.0)
-            self.deleteMemories(oppositeMemories.map(\.id))
+            // best effort delete
+            await self.deleteMemories(oppositeMemories.map(\.id))
         }
 
         /// similar entries exist. return.
@@ -90,29 +129,32 @@ class BaseMemoryStore {
             return .success
         }
 
-        self.addedMemories.append(
+        return await self.addMemories([
             .init(
                 category: memory.category,
                 fact: query,
                 embeddings: newEmbedding
             )
-        )
-        return .success
+
+        ])
     }
 
-    func searchMemory(_ searchQuery: MemorySearchInput) -> [MemorySearchResult]
+    func searchMemory(_ searchQuery: MemorySearchInput) async
+        -> [MemorySearchResult]
     {
+        let addedMemories = await self.addedMemories
+
         let query = searchQuery.query
         let queryEmbedding = calculateEmbedding(query)
         let exactMatch: [(MemoryEntry, Double?)] = findExactMatch(
-            base: self.addedMemories,
+            base: addedMemories,
             to: query
         ).map({ ($0, exactMatchSimilarity) })
 
         var base =
             searchQuery.categories.isEmpty
-            ? self.addedMemories
-            : self.addedMemories.filter({
+            ? addedMemories
+            : addedMemories.filter({
                 searchQuery.categories.contains($0.category)
             })
 
@@ -121,7 +163,7 @@ class BaseMemoryStore {
         })
 
         guard let queryEmbedding else {
-            return prepareForSearchResult(
+            return await prepareForSearchResult(
                 for: exactMatch
                     + base.map({
                         ($0, nil)
@@ -139,25 +181,43 @@ class BaseMemoryStore {
             categories: searchQuery.categories
         )
 
-        return prepareForSearchResult(
+        return await prepareForSearchResult(
             for: exactMatch + similarMemories
         )
     }
 
-    func deleteMemories(_ memories: [MemoryEntry.ID]) {
-        self.addedMemories.removeAll(where: { memories.contains($0.id) })
+    func addMemories(_ memories: [MemoryEntry]) async -> AddMemoryResult {
+        guard !memories.isEmpty else { return .success }
+
+        let update = MemoryStoreUpdate(add: memories, delete: [])
+        self.storeUpdateContinuation.yield(update)
+        await self.memoryActor.updateMemory(update)
+        return .success
     }
 
-    private func removeUnused() {
+    func deleteMemories(
+        _ memories: [MemoryEntry.ID]
+    ) async {
+        guard !memories.isEmpty else { return }
+        let update = MemoryStoreUpdate(add: [], delete: memories)
+        self.storeUpdateContinuation.yield(update)
+        await self.memoryActor.updateMemory(update)
+    }
+
+    private func removeUnused() async {
         guard let maxUnusedDays else { return }
+        let addedMemories = await self.addedMemories
         let now = Date()
         let threshold = Double(maxUnusedDays) * 60 * 60 * 24
-        let memories = addedMemories.filter({
+        let memories = addedMemories.filter {
             let lastUsed = $0.lastUsed ?? $0.createdAt
             let distance = lastUsed.distance(to: now)
             return distance < threshold
-        })
-        self.addedMemories = memories
+        }
+        let diff = Set(addedMemories.map(\.id)).subtracting(memories.map(\.id))
+
+        await deleteMemories(Array(diff))
+        await self.memoryActor.updateMemory(.init(add: [], delete: Array(diff)))
     }
 
     /// results: - an array of category-filtered memories, cosine similarity
@@ -191,28 +251,26 @@ class BaseMemoryStore {
     }
 
     private func prepareForSearchResult(for memories: [(MemoryEntry, Double?)])
-        -> [MemorySearchResult]
+        async -> [MemorySearchResult]
     {
-        return memories.map(prepareForSearchResult)
-    }
-
-    private func prepareForSearchResult(
-        for memory: MemoryEntry,
-        similarity: Double?
-    )
-        -> MemorySearchResult
-    {
-        if let firstIndex = self.addedMemories.firstIndex(where: {
-            $0.id == memory.id
-        }) {
-            self.addedMemories[firstIndex].lastUsed = Date()
+        var updatedMemories: [MemoryEntry] = []
+        var searchResult: [MemorySearchResult] = []
+        for (var memory, similarity) in memories {
+            memory.lastUsed = Date()
+            updatedMemories.append(memory)
+            searchResult.append(
+                MemorySearchResult(
+                    id: memory.id.uuidString,
+                    category: memory.category,
+                    fact: memory.fact,
+                    cosineSimilarity: similarity
+                )
+            )
         }
-        return MemorySearchResult(
-            id: memory.id.uuidString,
-            category: memory.category,
-            fact: memory.fact,
-            cosineSimilarity: similarity
+        await self.memoryActor.updateMemory(
+            .init(add: updatedMemories, delete: [])
         )
+        return searchResult
     }
 
     private func findExactMatch(base: [MemoryEntry], to query: String)

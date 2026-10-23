@@ -55,15 +55,18 @@ public struct MemoryAutoExtractionConfig<T: MemoryExtractor> {
 }
 
 public protocol MemoryStore {
-    /// A single memory entry retrieved from or to be added to a memory store.
-    associatedtype
-        MemoryEntry: ConvertibleFromGeneratedContent & PromptRepresentable
+    associatedtype AddMemoryInput: Generable
+    associatedtype AddMemoryResult: PromptRepresentable
 
     /// Add a single piece of content to the store
-    func addMemory(_ entry: MemoryEntry) async throws
+    func addMemory(_ input: AddMemoryInput) async throws -> AddMemoryResult
 
-    /// Search the store for entries matching the query, ordered by relevance
-    func searchMemory() async throws -> [MemoryEntry]
+    associatedtype SearchMemoryInput: Generable
+    associatedtype SearchMemoryResult: PromptRepresentable
+
+    /// Search the store for entries matching the query
+    func searchMemory(_ input: SearchMemoryInput) async throws
+        -> SearchMemoryResult
 }
 
 /// Transforms conversation messages into discrete, searchable entries.
@@ -75,95 +78,6 @@ public protocol MemoryExtractor {
     func extractMemory(from messages: [Transcript.Entry]) async throws
         -> [ExtractionResult]
 }
-
-/// A discrete entry produced by a `MemoryExtractor`, ready to be written to a store via its `MemoryStore.addMemory`.
-//public struct ExtractionResult {
-//    let content: String
-//    let metadata: [String: JSONValue]?
-//}
-
-/// JSON File MemoryStore: An entry per fact: {category, fact, ts}
-///
-/// Categories:
-/// About the user
-/// - identity: name, role, timezone, language
-/// - preferences: style, formatting, tools, tone
-/// - goals: what they're working toward
-/// - constraints: things to avoid, hard rules
-/// - feedback: corrections given to the agent
-///
-/// About the work
-/// - project: architecture, stack, key files, status
-/// - conventions: code style, naming, team norms
-/// - decisions: choices made and why
-/// - procedures: how to do recurring tasks (deploy, release, test)
-/// - issues: known bugs, gotchas, workarounds
-///
-/// About the world
-/// - people: teammates, contacts, who owns what
-/// - references: URLs, docs, dashboards, tickets
-/// - facts: general knowledge that doesn't fit elsewhere
-///
-/// About time
-/// - events: things that happened, with dates
-/// - tasks: open to-dos and follow-ups
-class FileMemoryStore {
-
-    @Generable(
-        description: """
-            Categories for agent long-term memory:
-            About the user
-            - identity: name, role, timezone, language
-            - preferences: style, formatting, tools, tone
-            - goals: what they're working toward
-            - constraints: things to avoid, hard rules
-            - feedback: corrections given to the agent
-
-            About the work
-            - project: architecture, stack, key files, status
-            - conventions: code style, naming, team norms
-            - decisions: choices made and why
-            - procedures: how to do recurring tasks (deploy, release, test)
-            - issues: known bugs, gotchas, workarounds
-
-            About the world
-            - people: teammates, contacts, who owns what
-            - references: URLs, docs, dashboards, tickets
-            - facts: general knowledge that doesn't fit elsewhere
-
-            About time
-            - events: things that happened, with dates
-            - tasks: open to-dos and follow-ups
-            """
-    )
-    enum Category: String, Codable {
-        /// About the user
-        case identity
-        case preferences
-        case goals
-        case constraints
-        case feedback
-
-        ///About the work
-        case project
-        case conventions
-        case decisions
-        case procedures
-        case issues
-
-        /// About the world
-        case people
-        case references
-        case facts
-
-        /// About time
-        case events
-        case tasks
-    }
-}
-
-/// SQLite + FTS5 MemoryStore
-class SQLiteMemoryStore {}
 
 struct AddMemoryTool<
     Arguments: Generable,

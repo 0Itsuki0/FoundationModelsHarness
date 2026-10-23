@@ -37,6 +37,11 @@ public struct MemoryEntryPartial: Sendable {
             """
     )
     public var fact: String
+
+    public init(category: Category, fact: String) {
+        self.category = category
+        self.fact = fact
+    }
 }
 
 @Generable()
@@ -101,7 +106,8 @@ public struct MemorySearchResult: Sendable {
     public var cosineSimilarity: Double?
 }
 
-public struct MemoryEntry: Identifiable, Codable, Sendable {
+public struct MemoryEntry: Identifiable, Codable, Sendable, Equatable, Hashable
+{
     public var id = UUID()
 
     public var category: Category

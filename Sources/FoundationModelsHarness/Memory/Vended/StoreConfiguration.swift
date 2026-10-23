@@ -6,7 +6,7 @@
 //
 
 /// Common configuration for the vended memory stores
-public struct MemoryStoreConfiguration {
+public struct MemoryStoreConfiguration: Sendable {
     /// Search configuration to apply when searching for memories matching a `MemorySearchInput`.
     /// aka: there is enough similarity to the query.
     public var searchConfiguration: MemorySearchConfiguration = .init(
@@ -61,7 +61,7 @@ public struct MemoryStoreConfiguration {
 ///  - useSameCategoryFallback: whether to use same category entry when there is no result returned after filtering with `similarityThreshold` and `topK`
 ///  - similarityThreshold: Cosine similarity threshold where entries with a value smaller than the threshold will be excluded
 ///  - topK:Limit the search result to top K matches
-public struct MemorySearchConfiguration {
+public struct MemorySearchConfiguration: Sendable {
 
     /// whether to use same category entry when there is no result returned after filtering with `similarityThreshold` and `topK`
     public var useSameCategoryFallback: Bool = true
