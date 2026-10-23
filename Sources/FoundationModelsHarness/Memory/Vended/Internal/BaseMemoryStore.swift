@@ -13,6 +13,12 @@ import NaturalLanguage
 /// Matching logic: normalized-text match and cosine similarity.
 final class BaseMemoryStore: Sendable {
 
+    protocol MemoryProvider: Sendable {
+        func getMemories() async throws -> [MemoryEntry]
+        func setMemories(_ memories: [MemoryEntry]) async throws
+        func updateMemory(_ update: MemoryStoreUpdate) async throws
+    }
+
     struct MemoryStoreUpdate: Sendable {
         var add: [MemoryEntry]
         var delete: [MemoryEntry.ID]

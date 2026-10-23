@@ -13,6 +13,9 @@ public actor FileMemoryStore: MemoryStore {
     private let baseStore: BaseMemoryStore
     private let fileURL: URL
 
+    private static let encoder = JSONEncoder()
+    private static let decoder = JSONDecoder()
+
     private var storeUpdateTask: Task<Void, Never>?
 
     /// Create a file memory store
@@ -23,25 +26,17 @@ public actor FileMemoryStore: MemoryStore {
         fileURL: URL = URL.applicationDirectory.appending(path: "memory.json"),
         storeConfiguration: MemoryStoreConfiguration = .init(),
         existingMemories: [MemoryEntry] = []
-    ) {
+    ) throws {
         self.fileURL = fileURL
         let baseStore = BaseMemoryStore(
             storeConfiguration: .init(),
-            existingMemories: [],
+            existingMemories: try Self.loadMemory(from: fileURL),
         )
 
         self.baseStore = baseStore
 
         Task {
             await self.setupStoreUpdateListener()
-        }
-    }
-
-    private func setupStoreUpdateListener() {
-        self.storeUpdateTask = Task {
-            for await event in baseStore.storeUpdateStream {
-                self.handleStoreUpdate(event)
-            }
         }
     }
 
@@ -62,6 +57,29 @@ public actor FileMemoryStore: MemoryStore {
 
     public func deleteMemories(_ memories: [MemoryEntry.ID]) async {
         await baseStore.deleteMemories(memories)
+    }
+
+    private static func loadMemory(from fileURL: URL) throws -> [MemoryEntry] {
+        guard FileManager.default.fileExists(atPath: fileURL.path()) else {
+            return []
+        }
+        let data = try Data(contentsOf: fileURL)
+        let memories = try self.decoder.decode([MemoryEntry].self, from: data)
+        return memories
+    }
+
+    private static func saveMemories(_ memories: [MemoryEntry], to fileURL: URL)
+        throws
+    {
+
+    }
+
+    private func setupStoreUpdateListener() {
+        self.storeUpdateTask = Task {
+            for await event in baseStore.storeUpdateStream {
+                self.handleStoreUpdate(event)
+            }
+        }
     }
 
     private func handleStoreUpdate(
