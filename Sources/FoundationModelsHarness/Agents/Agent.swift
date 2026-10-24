@@ -190,6 +190,10 @@ public final class Agent: Sendable, Identifiable {
         session.properties.pluginRegistry
     }
 
+    public var plugins: [String] {
+        self.pluginRegistry.plugins.map(\.pluginName)
+    }
+
     private var delegatedToolName: [String] {
         self.tools.filter({ $0.delegate }).map(\.invocableTool.name)
     }
@@ -223,7 +227,7 @@ public final class Agent: Sendable, Identifiable {
         instruction: Instructions = Instructions {},
         defaultInvocationOptions: InvocationOptions = InvocationOptions(),
         history: [Transcript.Entry] = []
-    ) {
+    ) async {
         /// NOTE: not injecting delegation prompt here with `ToolDelegationPlugin.injectDelegationPrompt` to
         /// 1. keep a clean version of the instruction
         /// 2. handle dynamic tool changes.
@@ -234,15 +238,48 @@ public final class Agent: Sendable, Identifiable {
         self.instruction = instruction
         self.model = model
         self.defaultInvocationOptions = defaultInvocationOptions
-        self.setupBuiltInHooks()
+        await self.addDelegationPlugin()
     }
 
-    private func setupBuiltInHooks() {
-        Task { [weak self] in
-            guard let self else { return }
-            /// `ToolDelegationPlugin` never throws so swallowing with `try?` is fine here.
-            let _ = try? await self.addPlugin(self.delegationPlugin)
-        }
+    /// Create an agent with long-term memory enabled.
+    ///
+    /// - Parameters:
+    ///  - model: model used by the agent. Gettable/Settable using `Agent.model`.
+    ///  - tools: tools to added to the agent. Gettable using `Agent.tools`, settable using `addTool`/`removeTool`.
+    ///  - instruction: Instruction used by the model. Gettable/Settable using `Agent.instruction`.
+    ///  - defaultInvocationOptions: Default invocation options that will be used when building respond / streamResponse request. Gettable/Settable using `Agent.defaultInvocationOptions`.
+    ///  - history: Existing transcript entries *without* the initial instructions.
+    public convenience init<Store: MemoryStore, Extractor: MemoryExtractor>(
+        model: any LanguageModel = SystemLanguageModel(),
+        tools: [ToolConfig] = [],
+        instruction: Instructions = Instructions {},
+        defaultInvocationOptions: InvocationOptions = InvocationOptions(),
+        history: [Transcript.Entry] = [],
+        memoryConfiguration: AgentMemoryConfiguration<Store, Extractor>
+    ) async {
+        await self.init(
+            model: model,
+            tools: tools,
+            instruction: instruction,
+            defaultInvocationOptions: defaultInvocationOptions,
+            history: history
+        )
+        await self.addMemoryPlugin(memoryConfiguration)
+    }
+
+    private func addMemoryPlugin<
+        Store: MemoryStore,
+        Extractor: MemoryExtractor
+    >(_ configuration: AgentMemoryConfiguration<Store, Extractor>) async {
+        let memoryPlugin = MemoryPlugin(configuration: configuration)
+
+        /// `MemoryPlugin` never throws so swallowing with `try?` is fine here.
+        let _ = try? await self.addPlugin(memoryPlugin)
+    }
+
+    private func addDelegationPlugin() async {
+        /// `ToolDelegationPlugin` never throws so swallowing with `try?` is fine here.
+        let _ = try? await self.addPlugin(self.delegationPlugin)
 
         /// the order of setting delegated tool names and adding it to the plugin registry does not matter.
         self.updateDelegationPlugin()

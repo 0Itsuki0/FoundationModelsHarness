@@ -88,7 +88,7 @@ func beforeInvocationHook(
 )
     async throws
 {
-    let agent = Agent(
+    let agent = await Agent(
         tools: [],
         instruction: .init("You are a helpful assistant.")
     )

@@ -36,7 +36,7 @@ private func setupCancellation(_ agent: Agent) {
 }
 
 func beforeModelHook(stream: Bool = false) async {
-    let agent = Agent(
+    let agent = await Agent(
         tools: [.init(tool: GreetingTool())],
         instruction: .init("You are a helpful assistant.")
     )

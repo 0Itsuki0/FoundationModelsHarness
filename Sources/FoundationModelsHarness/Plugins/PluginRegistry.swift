@@ -8,7 +8,7 @@
 /// Registry for managing plugins.
 /// One instance per session, aka: Agent. (Satisfied automatically when using with `SessionPropertyValues`)
 class PluginRegistry {
-    private var plugins: [RegisteredPlugin] = []
+    private(set) var plugins: [RegisteredPlugin] = []
 
     init(plugins: [RegisteredPlugin] = []) {
         self.plugins = plugins

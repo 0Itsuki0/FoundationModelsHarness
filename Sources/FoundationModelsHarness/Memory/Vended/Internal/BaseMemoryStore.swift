@@ -48,7 +48,6 @@ final class BaseMemoryStore: Sendable {
 
     init(
         storeConfiguration: MemoryStoreConfiguration,
-        //        existingMemories: [MemoryEntry],
         memoryProvider: MemoryProvider
     ) {
         self.memoryProvider = memoryProvider

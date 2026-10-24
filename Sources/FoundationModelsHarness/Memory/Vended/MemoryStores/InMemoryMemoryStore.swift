@@ -62,26 +62,26 @@ public actor InMemoryMemoryStore: MemoryStore {
     {
         return await baseStore.addMemory(memory)
     }
-    
+
     public func searchMemory(_ searchQuery: MemorySearchInput) async
-    -> [MemorySearchResult]
+        -> [MemorySearchResult]
     {
         return await baseStore.searchMemory(searchQuery)
     }
-    
+
     // MARK: - CRDU
     public func getMemories() async throws -> [MemoryEntry] {
         try await baseStore.getMemories()
     }
-    
+
     public func addMemories(_ memories: [MemoryEntry]) async throws {
         try await baseStore.addMemories(memories)
     }
-    
+
     public func updateMemories(_ memories: [MemoryEntry]) async throws {
         try await baseStore.updateMemories(memories)
     }
-    
+
     public func deleteMemories(_ memories: [MemoryEntry.ID]) async throws {
         try await baseStore.deleteMemories(memories)
     }

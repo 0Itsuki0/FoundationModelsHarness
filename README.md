@@ -37,7 +37,7 @@ targets: [
 import FoundationModels
 import FoundationModelsHarness
 
-let agent = Agent(
+let agent = await Agent(
     model: SystemLanguageModel(),
     tools: [.init(tool: GreetingTool())],
     instruction: .init("You are a helpful assistant.")
@@ -151,7 +151,7 @@ Adding a plugin registers its hooks and tools on the agent. Removing it unregist
 By default, a tool's output is sent back to the model to generate a final response. A delegated tool short-circuits that: its output is returned directly to the user as the final answer.
 
 ```swift
-let agent = Agent(
+let agent = await Agent(
     tools: [.init(tool: GreetingTool(), delegate: true)],
     instruction: .init("You are a helpful assistant.")
 )

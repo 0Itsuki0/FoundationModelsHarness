@@ -35,7 +35,7 @@ private func setupEndTurn(_ agent: Agent) {
 }
 
 func afterToolsHook(stream: Bool = false) async {
-    let agent = Agent(
+    let agent = await Agent(
         tools: [.init(tool: GreetingTool(), delegate: false)],
         instruction: .init("You are a helpful assistant.")
     )

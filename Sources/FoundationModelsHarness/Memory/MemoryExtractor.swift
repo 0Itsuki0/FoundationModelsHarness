@@ -81,7 +81,10 @@
 
 import FoundationModels
 
-public class LanguageModelExtractor /*: MemoryExtractor*/ {
+public actor LanguageModelExtractor: MemoryExtractor {
+
+    public typealias ExtractionResult = GeneratedContent
+
     public static let defaultInstruction = """
         You extract useful durable information for the assistant to remember across future conversations with the user.
 
@@ -100,7 +103,7 @@ public class LanguageModelExtractor /*: MemoryExtractor*/ {
 
     private let schema: GenerationSchema
 
-    private let buildPrompt: ([Transcript.Entry]) -> Prompt
+    private let buildPrompt: @Sendable ([Transcript.Entry]) -> Prompt
 
     private let session: LanguageModelSession
 
@@ -110,7 +113,7 @@ public class LanguageModelExtractor /*: MemoryExtractor*/ {
             LanguageModelExtractor.defaultInstruction
         },
         schema: GenerationSchema,
-        buildPrompt: @escaping ([Transcript.Entry]) -> Prompt
+        buildPrompt: @Sendable @escaping ([Transcript.Entry]) -> Prompt
     ) {
         self.session = LanguageModelSession(
             model: model,
@@ -137,19 +140,19 @@ public class LanguageModelExtractor /*: MemoryExtractor*/ {
         return response.rawContent
     }
 
-//    private func buildPrompt(from messages: [Transcript.Entry]) -> String {
-//        return messages.compactMap { message in
-//            switch message {
-//            case .prompt(let prompt):
-//                return "User: \(prompt.segments.rawContent)"
-//            case .response(let response):
-//                return "Assistant: \(response.segments.rawContent)"
-//            default:
-//                return nil
-//            }
-//        }
-//        .joined(separator: "\n")
-//    }
+    //    private func buildPrompt(from messages: [Transcript.Entry]) -> String {
+    //        return messages.compactMap { message in
+    //            switch message {
+    //            case .prompt(let prompt):
+    //                return "User: \(prompt.segments.rawContent)"
+    //            case .response(let response):
+    //                return "Assistant: \(response.segments.rawContent)"
+    //            default:
+    //                return nil
+    //            }
+    //        }
+    //        .joined(separator: "\n")
+    //    }
 
     /// remove all conversational entries
     private func clearSessionHistory() {

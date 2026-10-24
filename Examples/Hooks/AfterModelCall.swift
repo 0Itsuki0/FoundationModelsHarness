@@ -49,7 +49,7 @@ private func setupResponseMutation(_ agent: Agent) {
 }
 
 func afterModelHook(stream: Bool = false, example: AfterModelExample) async {
-    let agent = Agent(
+    let agent = await Agent(
         tools: [.init(tool: GreetingTool())],
         instruction: .init("You are a helpful assistant.")
     )

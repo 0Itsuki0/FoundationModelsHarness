@@ -20,7 +20,7 @@ actor ToolDelegationPlugin: Plugin {
     /// current delegated tool that is being executed.
     private var executingToolCallId: Transcript.ToolCall.ID?
 
-    nonisolated private var hooks: [any HookEventHandler] {
+    private var hooks: [any HookEventHandler] {
         return [
             BeforeModelCallEventHandler(
                 callback: { _ in await self.reset() },
@@ -80,15 +80,15 @@ actor ToolDelegationPlugin: Plugin {
     }
 
     /// reset the `executingToolCallId` per model call (NOT per invoke) so that the state can be fresh on retries or continuous model invocations.
-    nonisolated private func reset() async {
-        await self.eraseExecutingToolCallId()
+    private func reset() async {
+        self.eraseExecutingToolCallId()
     }
 
     /// cancel all other tool calls that are not delegated tools if there is a delegated tool being / will be executed this turn
-    nonisolated private func beforeToolCall(
+    private func beforeToolCall(
         _ event: inout BeforeToolCallEventHandler.EventPayload
     ) async {
-        let delegatedTools = await getDelegatedTools()
+        let delegatedTools = getDelegatedTools()
         /// no delegated tool calls in this turn at all. return early.
         guard
             event.toolCalls.map(\.toolName).contains(where: {
@@ -99,7 +99,7 @@ actor ToolDelegationPlugin: Plugin {
         /// current tool being executed is the delegated tool && no delegated tool is being executed yet.
         /// If the tool mode is parallel, those might still coming in before
         if delegatedTools.contains(event.toolCall.toolName),
-            await self.trySetExecutingToolCallId(event.toolCall.id)
+            self.trySetExecutingToolCallId(event.toolCall.id)
         {
             return
         }
@@ -112,7 +112,7 @@ actor ToolDelegationPlugin: Plugin {
 
     }
 
-    nonisolated private func cancelToolCall(
+    private func cancelToolCall(
         _ event: inout BeforeToolCallEventHandler.EventPayload
     ) {
         event.cancel = .string(

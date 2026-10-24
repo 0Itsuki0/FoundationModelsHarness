@@ -32,7 +32,7 @@ private func testRespond(_ agent: Agent) async {
 }
 
 func toolDelegation(stream: Bool = false) async {
-    let agent = Agent(
+    let agent = await Agent(
         tools: [.init(tool: GreetingTool(), delegate: true)],
         instruction: .init("You are a helpful assistant.")
     )

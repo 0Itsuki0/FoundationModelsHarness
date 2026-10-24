@@ -5,48 +5,66 @@
 //  Created by Itsuki on 2026/10/19.
 //
 
-// MEMO: strands-ts/src/memory/memory-manager.ts
-// Vended memory store: strands-ts/src/vended-memory-stores/file-memory-store/store.ts
-// memory extraction: strands-ts/src/memory/extraction/model-extractor.ts
-
 import FoundationModels
 
-/// Non-public to avoid re-using one instance for multiple agent.
-class MemoryPlugin: Plugin {
+//static let systemPromptInjection = """
+//                Look up information about the user using the [\(searchTool.name)] tool **whenever** knowing their preferences, works, tasks, or relationships *COULD possibly* make you better assistant them.
+//            - Use the tool **proactively**. Do NOT wait for the user to prompt you explicitly to use it.
+//            - Only use it as a reference. It is not guaranteed to be correct. It can be out-of-date. Never question what the user says.
+//            - Always answer in natural tone.
+//            - If there is no results, answer normally.
+//            - Never inform the user about the search result.
+//
+//    """
+//
 
-    static let name: PluginName = "FoundationModelsHarness_MemoryPlugin"
+/// Configure how the tool will be added to the agent
+public struct ToolOption: Sendable {
+    /// Boolean flag on whether to add the tool to the agent
+    public var enabled: Bool
 
-    func initAgent(_ agent: Agent) async -> PluginInitResult {
-        return PluginInitResult(addedHooks: [], addedTools: [])
+    /// override the tool name
+    public var nameOverride: String? = nil
+
+    /// override the tool description
+    public var descriptionOverride: String? = nil
+
+    public init(
+        enabled: Bool,
+        nameOverride: String? = nil,
+        descriptionOverride: String? = nil
+    ) {
+        self.enabled = enabled
+        self.nameOverride = nameOverride
+        self.descriptionOverride = descriptionOverride
     }
-
-    func deInitAgent(_ agent: Agent) async {
-
-    }
-
-    //    let hooks: [any HookEventHandler] = []
-    //
-    //    let tools: [ToolConfig] = []
-
-    //    let enableAutoExtraction: Bool
-    // true to add a extractor that extract queries to be written to memory every x turns
-    // because  You also don't want to rely on the main LLM remembering to call add_memory, which was the reason automatic extraction exists in the first place.
 }
 
 /// Automatic-memory-extraction configuration.
-public struct MemoryAutoExtractionConfig<T: MemoryExtractor> {
-    /// Extractor to transform conversation messages into discrete, searchable entries.
+/// Add a memory extractor that extract queries to be written to memory every x turns.
+public struct MemoryAutoExtractionConfig<T: MemoryExtractor>: Sendable {
+    /// Extractor to transform conversation messages into discrete, searchable memory entries.
     public let extractor: T
 
     /// turns to buffer before running extraction. Default to 5.
     public let turnBufferCount: Int
 
-    public let onExtraction: (T.ExtractionResult) async -> Void
+    /// Handle extraction results, for example, to transform the `ExtractionResult` to a type accepts by the `MemoryStore`
+    public let onExtraction:
+        @Sendable (Result<T.ExtractionResult, Error>) async -> Void
 
+    /// Create an automatic-memory-extraction configuration.
+    ///
+    /// - Parameters:
+    ///   - extractor: Memory Extractor to transform conversation messages into discrete, searchable entries
+    ///   - turnBufferCount: turns to buffer the messages before running extraction. Default to 5.
+    ///   - onExtraction:extraction results handler
     public init(
         extractor: T,
-        turnBufferCount: Int,
-        onExtraction: @escaping (T.ExtractionResult) async -> Void
+        turnBufferCount: Int = 5,
+        onExtraction:
+            @Sendable @escaping (Result<T.ExtractionResult, Error>) async ->
+            Void
     ) {
         self.extractor = extractor
         self.turnBufferCount = turnBufferCount
@@ -54,7 +72,197 @@ public struct MemoryAutoExtractionConfig<T: MemoryExtractor> {
     }
 }
 
-public protocol MemoryStore {
+/// Configuration for agent's long term memory
+public struct AgentMemoryConfiguration<
+    Store: MemoryStore,
+    Extractor: MemoryExtractor
+>: Sendable {
+
+    /// Memory store to
+    /// 1. persist long-term memory
+    /// 2. supply search results
+    public var store: Store
+
+    /// Automatic-memory-extraction configuration to extract long-term memory automatically
+    public var autoExtraction: MemoryAutoExtractionConfig<Extractor>?
+
+    /// Tool configurations on `AddMemoryTool`
+    /// Recommend to disable this tool and use `autoExtraction` instead.
+    public var addMemoryToolConfig: ToolOption
+
+    /// Tool configurations on `SearchMemoryTool`
+    public var searchMemoryToolConfig: ToolOption
+
+    /// Create a configuration for agent's long term memory
+    ///
+    /// - Parameters:
+    ///   - store: Memory store
+    ///   - autoExtraction: Automatic-memory-extraction configuration to extract long-term memory automatically
+    ///   - addMemoryToolConfig: Tool configurations on `AddMemoryTool`. Recommend to disable this tool and use `autoExtraction` instead.
+    ///   - searchMemoryToolConfig Tool configurations on `SearchMemoryTool`
+    public init(
+        store: Store,
+        autoExtraction: MemoryAutoExtractionConfig<Extractor>,
+        addMemoryToolConfig: ToolOption,
+        searchMemoryToolConfig: ToolOption
+    ) {
+        self.store = store
+        self.autoExtraction = autoExtraction
+        self.addMemoryToolConfig = addMemoryToolConfig
+        self.searchMemoryToolConfig = searchMemoryToolConfig
+    }
+}
+
+extension AgentMemoryConfiguration where Extractor == DisabledExtractor {
+    /// Create a configuration for agent's long term memory disabling auto extraction
+    ///
+    /// - Parameters:
+    ///   - store: Memory store
+    ///   - addMemoryToolConfig: Tool configurations on `AddMemoryTool`.
+    ///   - searchMemoryToolConfig Tool configurations on `SearchMemoryTool`
+    public init(
+        store: Store,
+        addMemoryToolConfig: ToolOption,
+        searchMemoryToolConfig: ToolOption
+    ) {
+        self.store = store
+        self.autoExtraction = nil
+        self.addMemoryToolConfig = addMemoryToolConfig
+        self.searchMemoryToolConfig = searchMemoryToolConfig
+    }
+}
+
+/// A shadow type to disable auto extraction
+/// Exported only so that the `init(store:,addMemoryTool: ,searchMemoryTool: )` can be exported as public
+public actor DisabledExtractor: MemoryExtractor {
+    public func extractMemory(from messages: [Transcript.Entry]) async throws {
+        fatalError()
+    }
+    public typealias ExtractionResult = Void
+}
+
+/// Non-public to avoid re-using one instance for multiple agent.
+actor MemoryPlugin<
+    Store: MemoryStore,
+    Extractor: MemoryExtractor
+>: Plugin {
+
+    static var name: PluginName { "FoundationModelsHarness_MemoryPlugin" }
+
+    private let configuration: AgentMemoryConfiguration<Store, Extractor>
+
+    private var bufferedMessages: [Transcript.Entry] = []
+
+    init(configuration: AgentMemoryConfiguration<Store, Extractor>) {
+        self.configuration = configuration
+    }
+
+    func initAgent(_ agent: Agent) -> PluginInitResult {
+        var tools: [ToolName] = []
+        var hooks: [HookID] = []
+        let store = configuration.store
+        let addToolConfig = configuration.addMemoryToolConfig
+        let searchToolConfig = configuration.searchMemoryToolConfig
+        if addToolConfig.enabled {
+            let addMemoryTool = AddMemoryTool(
+                call: { argument in
+                    return try await store.addMemory(argument)
+                },
+                nameOverride: addToolConfig.nameOverride,
+                descriptionOverride: addToolConfig.descriptionOverride
+            )
+            agent.addTool(.init(tool: addMemoryTool))
+            tools.append(addMemoryTool.name)
+        }
+
+        if searchToolConfig.enabled {
+            let searchMemoryTool = SearchMemoryTool(
+                call: { argument in
+                    return try await store.searchMemory(argument)
+                },
+                nameOverride: searchToolConfig.nameOverride,
+                descriptionOverride: searchToolConfig.descriptionOverride
+            )
+            agent.addTool(.init(tool: searchMemoryTool))
+            tools.append(searchMemoryTool.name)
+        }
+
+        if configuration.autoExtraction != nil {
+            let hookId = agent.addHook(
+                AfterInvocationEventHandler(
+                    callback: { self.handleAfterInvocation($0) },
+                    options: .init(order: BuiltInHookOrder.sdkLast.rawValue)
+                )
+            )
+            hooks.append(hookId)
+        }
+
+        return PluginInitResult(addedHooks: hooks, addedTools: tools)
+    }
+
+    func deInitAgent(_ agent: Agent) {
+        self.flushBufferedMemories()
+    }
+
+    private func flushBufferedMemories() {
+        self.startExtractionIfNecessary(checkBufferCount: false)
+    }
+
+    private func handleAfterInvocation(
+        _ event: AfterInvocationEventHandler.EventPayload
+    ) {
+        let history = event.agent.history
+
+        /// extract last turn
+        guard
+            let lastIndex = history.lastIndex(where: {
+                $0.asPrompt != nil
+            })
+        else {
+            return
+        }
+
+        let lastTurn = history[lastIndex...]
+        self.bufferedMessages.append(contentsOf: lastTurn)
+        self.startExtractionIfNecessary()
+    }
+
+    /// Not awaiting here to perform the extraction in the background.
+    private func startExtractionIfNecessary(checkBufferCount: Bool = true) {
+        guard let extractionConfig = self.configuration.autoExtraction,
+            !(extractionConfig.extractor is DisabledExtractor)
+        else {
+            self.bufferedMessages = []
+            return
+        }
+
+        let turnCount = self.bufferedMessages.count(where: {
+            $0.asPrompt != nil
+        })
+
+        if checkBufferCount, turnCount < extractionConfig.turnBufferCount {
+            return
+        }
+
+        let extractorInput = self.bufferedMessages
+        self.bufferedMessages.removeAll()
+
+        let extractor = extractionConfig.extractor
+        let onExtraction = extractionConfig.onExtraction
+        Task { [extractor, onExtraction] in
+            do {
+                let result = try await extractor.extractMemory(
+                    from: extractorInput
+                )
+                await onExtraction(.success(result))
+            } catch {
+                await onExtraction(.failure(error))
+            }
+        }
+    }
+}
+
+public protocol MemoryStore: Sendable {
     associatedtype AddMemoryInput: Generable
     associatedtype AddMemoryResult: PromptRepresentable
 
@@ -70,13 +278,13 @@ public protocol MemoryStore {
 }
 
 /// Transforms conversation messages into discrete, searchable entries.
-public protocol MemoryExtractor {
-    associatedtype ExtractionResult
+public protocol MemoryExtractor: Sendable {
+    associatedtype ExtractionResult: Sendable
 
     /// - Parameters:
-    ///   - messages: filtered messages (only prompt and response) to extract from
+    ///   - messages: messages (excluding instruction, but include tool use / tool output) to extract from. The message count  here depends on the `MemoryAutoExtractionConfig.turnBuffer` count.
     func extractMemory(from messages: [Transcript.Entry]) async throws
-        -> [ExtractionResult]
+        -> ExtractionResult
 }
 
 struct AddMemoryTool<
@@ -113,6 +321,7 @@ struct SearchMemoryTool<
     Arguments: Generable,
     Output: PromptRepresentable
 >: Tool {
+
     var name = "search_user_info"
     var description = """
         Look up user-related information such as preferences, rules, relationships, and tasks.

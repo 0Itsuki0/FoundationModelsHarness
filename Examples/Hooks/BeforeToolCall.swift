@@ -84,7 +84,7 @@ private func setUpStateAccessing(_ agent: Agent) {
 func beforeToolCallHook(stream: Bool = false, example: BeforeToolCallExample)
     async
 {
-    let agent = Agent(
+    let agent = await Agent(
         tools: [.init(tool: GreetingTool(), delegate: false)],
         instruction: .init("You are a helpful assistant.")
     )

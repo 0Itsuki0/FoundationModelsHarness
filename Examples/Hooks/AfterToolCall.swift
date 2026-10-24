@@ -51,7 +51,7 @@ private struct ToolCallFailure: Error {}
 func afterToolCallHook(stream: Bool = false, example: AfterToolCallExample)
     async
 {
-    let agent = Agent(
+    let agent = await Agent(
         tools: [.init(tool: GreetingTool())],
         instruction: .init("You are a helpful assistant.")
     )
