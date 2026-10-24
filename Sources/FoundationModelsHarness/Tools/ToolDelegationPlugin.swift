@@ -13,7 +13,8 @@ import FoundationModels
 /// using an `actor` here to handle potential parallel hook callbacks.
 /// Non-public to avoid re-using one instance for multiple agent.
 actor ToolDelegationPlugin: Plugin {
-    static let name: PluginName = "\(reservedPackagePrefix)_ToolDelegationPlugin"
+    static let name: PluginName =
+        "\(reservedPackagePrefix)_ToolDelegationPlugin"
 
     private var delegatedTools: [ToolName]
 
@@ -42,9 +43,8 @@ actor ToolDelegationPlugin: Plugin {
     }
 
     /// NOTE: not modifying the instruction here as it will need to be dynamic based on tool configuration
-    func initAgent(_ agent: Agent) -> PluginInitResult {
-        let hookIds = hooks.map(agent.addHook(_:))
-        return PluginInitResult(addedHooks: hookIds, addedTools: [])
+    func initAgent(_ agent: Agent) {
+        let _ = hooks.map(agent.addHook(_:))
     }
 
     func deInitAgent(_ agent: Agent) {}

@@ -17,8 +17,11 @@ public final class AgentSnapshot {
         /// Currently registered tools.
         public let tools: [ToolConfig]
 
+        /// Package property for access to all parameters
+        let _plugins: [RegisteredPlugin]
+
         /// Currently register plugins
-        public let plugins: [any Plugin]
+        public var plugins: [any Plugin] { _plugins.map(\.plugin) }
 
         /// Currently registered hooks
         public let hooks: [any HookEventHandler]
@@ -29,9 +32,7 @@ public final class AgentSnapshot {
         init(session: LanguageModelSession) {
             self.tools = session.properties.tools
             self.hooks = session.properties.hookRegistry.registeredHooks
-            self.plugins = session.properties.pluginRegistry.plugins.map(
-                \.plugin
-            )
+            self._plugins = session.properties.pluginRegistry.plugins
             self.instruction = session.properties.instruction
         }
 

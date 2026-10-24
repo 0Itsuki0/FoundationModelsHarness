@@ -210,8 +210,8 @@ public final class Agent: Sendable, Identifiable {
         self.delegatedToolName.contains(toolName)
     }
 
-    private var agentSnapshot: AgentSnapshot {
-        AgentSnapshot(session: self.session)
+    func takeSnapshot() -> AgentSnapshot {
+        return AgentSnapshot(session: self.session)
     }
 
     private var dummyPromptMetadata: [String: any ConvertibleToGeneratedContent]
@@ -1289,7 +1289,7 @@ extension Agent {
         var event = BeforeToolCallEventHandler.EventPayload(
             toolCall: toolCall,
             toolCalls: Array(allCalls),
-            agent: agentSnapshot
+            agent: takeSnapshot()
         )
 
         for handler in handlers {
@@ -1323,7 +1323,7 @@ extension Agent {
         var event = AfterToolCallEventHandler.EventPayload(
             toolCall: result.toolCall,
             toolResult: result.result,
-            agent: agentSnapshot,
+            agent: takeSnapshot(),
             attemptCount: currentAttempt
         )
 
@@ -1346,7 +1346,7 @@ extension Agent {
         let handlers = hookRegistry.beforeToolsHandlers
         var event = BeforeToolsEventHandler.EventPayload(
             toolCalls: Array(toolCalls),
-            agent: agentSnapshot
+            agent: takeSnapshot()
         )
 
         for handler in handlers {
@@ -1393,7 +1393,7 @@ extension Agent {
         let handlers = hookRegistry.afterToolsHandlers
         var event = AfterToolsEventHandler.EventPayload(
             toolResults: toolCallResults,
-            agent: agentSnapshot
+            agent: takeSnapshot()
         )
 
         for handler in handlers {
@@ -1444,7 +1444,7 @@ extension Agent {
         let handlers = hookRegistry.beforeInvocationHandlers
         var event = BeforeInvocationEventHandler.EventPayload(
             prompt: prompt,
-            agent: agentSnapshot
+            agent: takeSnapshot()
         )
 
         for handler in handlers {
@@ -1481,7 +1481,7 @@ extension Agent {
 
         let handlers = hookRegistry.beforeModelCallHandlers
         var event = BeforeModelCallEventHandler.EventPayload(
-            agent: agentSnapshot
+            agent: takeSnapshot()
         )
 
         for handler in handlers {
@@ -1534,7 +1534,7 @@ extension Agent {
         var event = AfterModelCallEventHandler.EventPayload(
             stopReason: stopData.stopReason,
             usage: stopData.usage,
-            agent: agentSnapshot,
+            agent: takeSnapshot(),
             attemptCount: currentAttempt
         )
 
@@ -1571,7 +1571,7 @@ extension Agent {
         let handlers = hookRegistry.afterInvocationHandlers
         var event = AfterInvocationEventHandler.EventPayload(
             result: result,
-            agent: agentSnapshot,
+            agent: takeSnapshot(),
             attemptCount: currentAttempt
         )
 

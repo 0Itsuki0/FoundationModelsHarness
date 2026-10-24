@@ -117,34 +117,36 @@ See [`Examples/Hooks/`](Examples/Hooks/) for an example per event.
 
 ## Plugins
 
-Plugins change the typical behavior of an agent. They let you introduce concepts like skills, steering, or other behavioral modifications into the agent loop by composing the low-level primitives the `Agent` exposes: hooks and tools.
+Plugins change the typical behavior of an agent. They let you introduce concepts like skills, steering, or other behavioral modifications into the agent loop by composing the low-level primitives the `Agent` exposes such as hooks, tools, plugins, instructions.
 
 Implement the `Plugin` protocol:
 
 ```swift
-struct LoggingPlugin: Plugin {
+actor LoggingPlugin: Plugin {
     static let name: PluginName = "LoggingPlugin"
 
-    var tools: [ToolConfig] = []
-
-    var hooks: [any HookEventHandler] {
-        [
+    func initAgent(_ agent: FoundationModelsHarness.Agent) async throws {
+        agent.addHook(
             BeforeModelCallEventHandler(callback: { event in
                 print("model call: \(event.agent.history.count) entries")
-            }),
+            })
+        )
+        agent.addHook(
             AfterToolCallEventHandler(callback: { event in
                 print("tool result: \(event.toolResult)")
-            }),
-        ]
+            })
+        )
     }
+
+    func deInitAgent(_ agent: FoundationModelsHarness.Agent) async throws {}
 }
 
-agent.addPlugin(LoggingPlugin())
+agent.addPlugin(LoggingPlugin()) // A plugin whose `name` is already registered will be ignored.
 agent.removePlugin(LoggingPlugin.name)
 ```
 
-Adding a plugin registers its hooks and tools on the agent. Removing it unregisters exactly those hooks and tools. A plugin whose `name` is already registered is ignored.
-
+Register hooks, tools, bundled plugins, modify instructions with `initAgent`.
+Use `deInitAgent` for clean-up purpose. Registered hooks/tools/plugins and modified instruction will be rollbacked automatically.
 
 ## Long-Term Memory
 

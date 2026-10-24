@@ -146,9 +146,7 @@ actor MemoryPlugin<
         self.configuration = configuration
     }
 
-    func initAgent(_ agent: Agent) -> PluginInitResult {
-        var tools: [ToolName] = []
-        var hooks: [HookID] = []
+    func initAgent(_ agent: Agent) {
         let store = configuration.store
         let addToolConfig = configuration.addMemoryToolConfig
         let searchToolConfig = configuration.searchMemoryToolConfig
@@ -161,7 +159,6 @@ actor MemoryPlugin<
                 descriptionOverride: addToolConfig.descriptionOverride
             )
             agent.addTool(.init(tool: addMemoryTool))
-            tools.append(addMemoryTool.name)
         }
 
         if searchToolConfig.enabled {
@@ -173,20 +170,16 @@ actor MemoryPlugin<
                 descriptionOverride: searchToolConfig.descriptionOverride
             )
             agent.addTool(.init(tool: searchMemoryTool))
-            tools.append(searchMemoryTool.name)
         }
 
         if configuration.autoExtraction != nil {
-            let hookId = agent.addHook(
+            let _ = agent.addHook(
                 AfterInvocationEventHandler(
                     callback: { self.handleAfterInvocation($0) },
                     options: .init(order: BuiltInHookOrder.sdkLast.rawValue)
                 )
             )
-            hooks.append(hookId)
         }
-
-        return PluginInitResult(addedHooks: hooks, addedTools: tools)
     }
 
     func deInitAgent(_ agent: Agent) {

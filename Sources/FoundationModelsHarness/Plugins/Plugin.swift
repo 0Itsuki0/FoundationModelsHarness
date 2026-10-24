@@ -16,27 +16,19 @@ public typealias PluginName = String
 /// One Plugin type can only be attached to an Agent once.
 ///
 /// Implement this protocol to create your own plugins.
-public protocol Plugin {
+public protocol Plugin: Sendable {
 
     /// A stable string identifier for the plugin.
     static var name: PluginName { get }
 
     /// Initialize the plugin with the agent instance.
-    /// Implement this method to register hooks, tools, and perform custom initialization.
+    /// Implement this method to register hooks, tools, other plugins, and perform custom initialization such as modify instructions.
     ///
     /// This maybe called for multiple times on multiple different agent instances.
-    ///
-    /// Returning
-    /// - `PluginInitResult` for clean up purpose.
-    func initAgent(_ agent: Agent) async throws -> PluginInitResult
+    func initAgent(_ agent: Agent) async throws
 
     /// DeInitialize the plugin with the agent instance.
     /// Use this function for clean up.
     /// Changes on instructions, other plugins, hooks and tools added will be recovered automatically.
     func deInitAgent(_ agent: Agent) async throws
-}
-
-public struct PluginInitResult: Sendable {
-    let addedHooks: [HookID]
-    let addedTools: [ToolName]
 }
