@@ -63,22 +63,22 @@ final class BaseMemoryStore: Sendable {
             await self.removeUnused()
         }
     }
-    
-    // MARK: - Re-exposing provider's implementations
+
+    // MARK: - CRUD: Re-exposing provider's implementations
     func getMemories() async throws -> [MemoryEntry] {
         try await self.memoryProvider.getMemories()
     }
-    
+
     func addMemories(_ memories: [MemoryEntry]) async throws {
         guard !memories.isEmpty else { return }
         try await self.memoryProvider.addMemories(memories)
     }
-    
+
     func updateMemories(_ memories: [MemoryEntry]) async throws {
         guard !memories.isEmpty else { return }
         try await self.memoryProvider.updateMemories(memories)
     }
-    
+
     func deleteMemories(
         _ memories: [MemoryEntry.ID]
     ) async throws {
@@ -86,6 +86,7 @@ final class BaseMemoryStore: Sendable {
         try await self.memoryProvider.deleteMemories(memories)
     }
 
+    // MARK: - Methods for wrapper classes' memory Store conformance
     /// add an entry to memory
     /// Always returning `success` because even when there is a similar memory already added, it is not necessarily a failure that the LLM needs to know
     func addMemory(_ memory: MemoryEntryPartial) async -> AddMemoryResult {
@@ -199,7 +200,9 @@ final class BaseMemoryStore: Sendable {
         )
     }
 
-    private func _addMemories(_ memories: [MemoryEntry]) async -> AddMemoryResult
+    // MARK: - private helpers
+    private func _addMemories(_ memories: [MemoryEntry]) async
+        -> AddMemoryResult
     {
         guard !memories.isEmpty else { return .success }
 
@@ -221,14 +224,18 @@ final class BaseMemoryStore: Sendable {
             print(#function, error)
             return
         }
-        let now = Date()
+
         let threshold = Double(maxUnusedDays) * 60 * 60 * 24
-        let memories = addedMemories.filter {
+        let cutoffDate = Date().addingTimeInterval(-threshold)
+
+        let remainingMemories = addedMemories.filter {
             let lastUsed = $0.lastUsed ?? $0.createdAt
-            let distance = lastUsed.distance(to: now)
-            return distance < threshold
+            return lastUsed > cutoffDate
         }
-        let diff = Set(addedMemories.map(\.id)).subtracting(memories.map(\.id))
+
+        let diff = Set(addedMemories.map(\.id)).subtracting(
+            remainingMemories.map(\.id)
+        )
 
         do {
             try await deleteMemories(Array(diff))
@@ -241,7 +248,7 @@ final class BaseMemoryStore: Sendable {
     /// results: - an array of category-filtered memories, cosine similarity
     private func applySearchConfig(
         to results: [(MemoryEntry, Double)],
-        categories: [Category]
+        categories: [MemoryCategory]
     )
         -> [(MemoryEntry, Double)]
     {

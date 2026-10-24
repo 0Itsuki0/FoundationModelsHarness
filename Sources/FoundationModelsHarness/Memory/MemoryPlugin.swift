@@ -115,7 +115,7 @@ struct SearchMemoryTool<
 >: Tool {
     var name = "search_user_info"
     var description = """
-        Look up user-related information such as preferences, rules, relationships.
+        Look up user-related information such as preferences, rules, relationships, and tasks.
         - Search with multi-word query. NEVER Sentence.
         """
 

@@ -9,6 +9,7 @@ import Foundation
 import FoundationModels
 
 /// File memory store to store entries in a JSON file.
+/// Best matching logic: Embeddings with Natural Language Framework + cosine distance
 public actor FileMemoryStore: MemoryStore {
     actor MemoryProvider: BaseMemoryStore.MemoryProvider {
         private let fileURL: URL
@@ -83,6 +84,7 @@ public actor FileMemoryStore: MemoryStore {
         )
     }
 
+    // MARK: - MemoryStore Implementation
     public func addMemory(_ memory: MemoryEntryPartial) async -> AddMemoryResult
     {
         return await baseStore.addMemory(memory)
@@ -94,6 +96,7 @@ public actor FileMemoryStore: MemoryStore {
         return await baseStore.searchMemory(searchQuery)
     }
 
+    // MARK: - CRDU
     public func getMemories() async throws -> [MemoryEntry] {
         try await baseStore.getMemories()
     }

@@ -9,7 +9,7 @@ import Foundation
 import FoundationModels
 
 @Generable(description: "Categories for long-term memory.")
-public enum Category: Codable, Sendable {
+public enum MemoryCategory: Codable, Sendable {
     /// About the user
     case identity
     case preferences
@@ -29,7 +29,7 @@ public struct MemoryEntryPartial: Sendable {
     @Guide(
         description: "Categories for the fact."
     )
-    public var category: Category
+    public var category: MemoryCategory
 
     @Guide(
         description: """
@@ -38,7 +38,7 @@ public struct MemoryEntryPartial: Sendable {
     )
     public var fact: String
 
-    public init(category: Category, fact: String) {
+    public init(category: MemoryCategory, fact: String) {
         self.category = category
         self.fact = fact
     }
@@ -60,7 +60,7 @@ public struct MemorySearchInput: Sendable {
         .minimumCount(1),
         .maximumCount(2)
     )
-    public var categories: [Category]
+    public var categories: [MemoryCategory]
 
     @Guide(
         description: """
@@ -77,7 +77,7 @@ public struct MemorySearchResult: Sendable {
     @Guide(
         description: "Categories for long-term memory."
     )
-    public var category: Category
+    public var category: MemoryCategory
 
     @Guide(
         description: """
@@ -111,7 +111,7 @@ public struct MemoryEntry: Identifiable, Codable, Sendable, Equatable, Hashable,
 {
     public var id = UUID()
 
-    public var category: Category
+    public var category: MemoryCategory
     public var fact: String
     public var createdAt: Date = Date()
     /// for auto clean up if needed.
@@ -120,7 +120,7 @@ public struct MemoryEntry: Identifiable, Codable, Sendable, Equatable, Hashable,
     public var embeddings: [Double]?
 
     public init(
-        category: Category,
+        category: MemoryCategory,
         fact: String,
         embeddings: [Double]?
     ) {
@@ -131,11 +131,12 @@ public struct MemoryEntry: Identifiable, Codable, Sendable, Equatable, Hashable,
 
     public var description: String {
         """
+
         MemoryEntry (id: \(id))
-        - Category: \(category)
+        - category: \(category)
         - fact: \(fact)
         - created at: \(createdAt)
-        - last used: \(lastUsed, default: "(none)")
+        - last used: \(lastUsed?.formatted(), default: "(never used)")
         """
     }
 }

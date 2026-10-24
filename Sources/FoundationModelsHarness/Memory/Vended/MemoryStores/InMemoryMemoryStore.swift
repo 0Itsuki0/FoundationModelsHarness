@@ -7,6 +7,8 @@
 
 import FoundationModels
 
+/// In-memory memory store for testing and debugging
+/// Best matching logic: Embeddings with Natural Language Framework + cosine distance
 public actor InMemoryMemoryStore: MemoryStore {
     actor MemoryProvider: BaseMemoryStore.MemoryProvider {
         private var memories: [MemoryEntry] = []
@@ -55,6 +57,7 @@ public actor InMemoryMemoryStore: MemoryStore {
         )
     }
 
+    // MARK: - MemoryStore Implementation
     public func addMemory(_ memory: MemoryEntryPartial) async -> AddMemoryResult
     {
         return await baseStore.addMemory(memory)
@@ -66,6 +69,7 @@ public actor InMemoryMemoryStore: MemoryStore {
         return await baseStore.searchMemory(searchQuery)
     }
     
+    // MARK: - CRDU
     public func getMemories() async throws -> [MemoryEntry] {
         try await baseStore.getMemories()
     }

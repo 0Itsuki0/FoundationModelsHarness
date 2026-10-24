@@ -44,7 +44,7 @@ let package = Package(
             name: "Examples",
             dependencies: [
                 "FoundationModelsHarness",
-                .product(name: "GRDB", package: "GRDB.swift")
+                "SQLiteStore"
             ],
             path: "Examples"
         ),
