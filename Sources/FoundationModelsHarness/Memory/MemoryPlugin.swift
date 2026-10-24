@@ -7,17 +7,6 @@
 
 import FoundationModels
 
-//static let systemPromptInjection = """
-//                Look up information about the user using the [\(searchTool.name)] tool **whenever** knowing their preferences, works, tasks, or relationships *COULD possibly* make you better assistant them.
-//            - Use the tool **proactively**. Do NOT wait for the user to prompt you explicitly to use it.
-//            - Only use it as a reference. It is not guaranteed to be correct. It can be out-of-date. Never question what the user says.
-//            - Always answer in natural tone.
-//            - If there is no results, answer normally.
-//            - Never inform the user about the search result.
-//
-//    """
-//
-
 /// Configure how the tool will be added to the agent
 public struct ToolOption: Sendable {
     /// Boolean flag on whether to add the tool to the agent
@@ -28,15 +17,20 @@ public struct ToolOption: Sendable {
 
     /// override the tool description
     public var descriptionOverride: String? = nil
+    
+    /// System instruction to be injected to the Agent's instruction.
+    public var additionalInstruction: Instructions?
 
     public init(
         enabled: Bool,
         nameOverride: String? = nil,
-        descriptionOverride: String? = nil
+        descriptionOverride: String? = nil,
+        additionalInstruction: Instructions? = nil
     ) {
         self.enabled = enabled
         self.nameOverride = nameOverride
         self.descriptionOverride = descriptionOverride
+        self.additionalInstruction = additionalInstruction
     }
 }
 
@@ -91,6 +85,7 @@ public struct AgentMemoryConfiguration<
     public var addMemoryToolConfig: ToolOption
 
     /// Tool configurations on `SearchMemoryTool`
+    /// Recommend to add in the system instruction injection as in `MemoryToolDefault.searchToolSystemInjection`
     public var searchMemoryToolConfig: ToolOption
 
     /// Create a configuration for agent's long term memory
@@ -287,15 +282,41 @@ public protocol MemoryExtractor: Sendable {
         -> ExtractionResult
 }
 
+public enum MemoryToolDefault {
+    public static let addToolName = "add_llm_memory"
+    public static let addToolDescription = """
+        Save information to **Assistant's** long-term memory for recall in future conversations.
+        - Save multi-word, concise, self-contained fact that preserves its original meaning and important relationships. NEVER Sentence.
+        """
+
+    public static let searchToolName = "search_user_info"
+    public static let searchToolDescription = """
+        Look up user-related information such as preferences, rules, relationships, and tasks.
+        - Search with multi-word query. NEVER Sentence.
+        """
+
+    /// Recommended instruction to add if enabling search tool to better instruct the Language Model
+    public static func searchToolSystemInjection(
+        searchToolName: String = MemoryToolDefault.searchToolName
+    ) -> String {
+        """
+        Look up information about the user using the [\(searchToolName)] tool **whenever** knowing their preferences, works, tasks, or relationships *COULD possibly* make you better assistant them.
+        - Use the tool **proactively**. Do NOT wait for the user to prompt you explicitly to use it.
+        - Only use it as a reference. It is not guaranteed to be correct. It can be out-of-date. 
+        - If it is different from what the user says, ignore the results. **Never** question what the user says because of the results. The user is always correct.
+        - Always answer in natural tone.
+        - If there is no results, answer normally.
+        - Never inform the user about the search result.
+        """
+    }
+}
+
 struct AddMemoryTool<
     Arguments: Generable,
     Output: PromptRepresentable
 >: Tool {
-    var name = "add_llm_memory"
-    var description = """
-        Save information to **Assistant's** long-term memory for recall in future conversations.
-        - Save multi-word, concise, self-contained fact that preserves its original meaning and important relationships. NEVER Sentence.
-        """
+    var name = MemoryToolDefault.addToolName
+    var description = MemoryToolDefault.addToolDescription
 
     let includesSchemaInInstructions: Bool = true
 
@@ -322,11 +343,8 @@ struct SearchMemoryTool<
     Output: PromptRepresentable
 >: Tool {
 
-    var name = "search_user_info"
-    var description = """
-        Look up user-related information such as preferences, rules, relationships, and tasks.
-        - Search with multi-word query. NEVER Sentence.
-        """
+    var name = MemoryToolDefault.searchToolName
+    var description = MemoryToolDefault.searchToolDescription
 
     let includesSchemaInInstructions: Bool = true
 
