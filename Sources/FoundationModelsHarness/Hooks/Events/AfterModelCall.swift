@@ -33,7 +33,7 @@ public struct AfterModelCallEventHandler: HookEventHandler {
         /// - `agentState`: Agent state persists across requests. Read/write.
         /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
         /// - `history`: The transcript entries excluding the leading instructions entry, if present, up to **not including** the last response.
-        /// - `tools`: currently registered tools
+        /// - `configuration`: Current Agent Configurations including tools, hooks, plugins, and instruction used.
         public let agent: AgentSnapshot
 
         /// Boolean flag that can be set by hook callbacks to request a retry of the tool call.
@@ -52,11 +52,13 @@ public struct AfterModelCallEventHandler: HookEventHandler {
 
     }
 
-    public let callback:nonisolated(nonsending) (inout EventPayload) async -> Void
+    public let callback:
+        nonisolated(nonsending) (inout EventPayload) async -> Void
     public let options: HookCallbackOptions?
 
     public init(
-        callback: nonisolated(nonsending) @escaping (inout EventPayload) async -> Void,
+        callback:
+            nonisolated(nonsending) @escaping (inout EventPayload) async -> Void,
         options: HookCallbackOptions? = nil
     ) {
         self.callback = callback

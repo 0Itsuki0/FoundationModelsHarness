@@ -29,13 +29,12 @@ public protocol Plugin {
     /// Returning
     /// - `PluginInitResult` for clean up purpose.
     func initAgent(_ agent: Agent) async throws -> PluginInitResult
-    
+
     /// DeInitialize the plugin with the agent instance.
     /// Use this function for clean up.
-    /// Hooks and tools added will be removed automatically.
+    /// Changes on instructions, other plugins, hooks and tools added will be recovered automatically.
     func deInitAgent(_ agent: Agent) async throws
 }
-
 
 public struct PluginInitResult: Sendable {
     let addedHooks: [HookID]

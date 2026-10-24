@@ -136,8 +136,7 @@ actor MemoryPlugin<
     Store: MemoryStore,
     Extractor: MemoryExtractor
 >: Plugin {
-
-    static var name: PluginName { "FoundationModelsHarness_MemoryPlugin" }
+    static var name: PluginName { "\(reservedPackagePrefix)_MemoryPlugin" }
 
     private let configuration: AgentMemoryConfiguration<Store, Extractor>
 

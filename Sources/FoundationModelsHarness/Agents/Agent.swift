@@ -8,6 +8,10 @@
 import FoundationModels
 import SwiftUI
 
+/// Package prefix reserved for vended plugins, tools.
+/// Do not start custom Plugin/Tools's name with this value
+let reservedPackagePrefix = "FoundationModelsHarness"
+
 /// Public `SessionPropertyValues` for possible access from the tools
 /// `SessionPropertyValues` is already per-session, aka: per agent, so there is no need to use an `[agent:value]`map
 extension SessionPropertyValues {
@@ -182,11 +186,15 @@ public final class Agent: Sendable, Identifiable {
         }
     }
 
-    private var hookRegistry: HookRegistry {
+    var hookRegistry: HookRegistry {
         session.properties.hookRegistry
     }
 
-    private var pluginRegistry: PluginRegistry {
+    public var hooks: [any HookEventHandler] {
+        self.hookRegistry.registeredHooks
+    }
+
+    var pluginRegistry: PluginRegistry {
         session.properties.pluginRegistry
     }
 

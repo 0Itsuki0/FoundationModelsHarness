@@ -30,7 +30,7 @@ public struct BeforeModelCallEventHandler: HookEventHandler {
         /// - `agentState`: Agent state persists across requests. Read/write.
         /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
         /// - `history`: The transcript entries excluding the leading instructions entry, if present,  including the current prompt or tool output that triggers the event.
-        /// - `tools`: currently registered tools
+        /// - `configuration`: Current Agent Configurations including tools, hooks, plugins, and instruction used.
         public let agent: AgentSnapshot
 
         /// Set to a non-nil value to cancel this model call. (`JSONValue.null` will cancel the call.)

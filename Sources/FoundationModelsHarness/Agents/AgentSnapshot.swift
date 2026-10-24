@@ -7,8 +7,36 @@
 
 import FoundationModels
 
-/// Interface for agents with locally accessible state, messages, and tools.
-public final class AgentSnapshot: Sendable {
+/// Snapshot of an agent with accessible state, messages, and configurations
+/// This snapshot is available in all hooks' callbacks
+public final class AgentSnapshot {
+
+    /// Snapshot of Agent's current configuration.
+    public struct ConfigurationSnapshot {
+
+        /// Currently registered tools.
+        public let tools: [ToolConfig]
+
+        /// Currently register plugins
+        public let plugins: [any Plugin]
+
+        /// Currently registered hooks
+        public let hooks: [any HookEventHandler]
+
+        /// currently used system instruction
+        public let instruction: Instructions
+
+        init(session: LanguageModelSession) {
+            self.tools = session.properties.tools
+            self.hooks = session.properties.hookRegistry.registeredHooks
+            self.plugins = session.properties.pluginRegistry.plugins.map(
+                \.plugin
+            )
+            self.instruction = session.properties.instruction
+        }
+
+    }
+
     private let session: LanguageModelSession
 
     /// Agent state accessible to tools and application logic.
@@ -41,13 +69,13 @@ public final class AgentSnapshot: Sendable {
     /// The transcript entries excluding the leading instructions entry, if present.
     public let history: Transcript.HistoryView
 
-    /// Currently registered tools.
-    public let tools: [ToolConfig]
+    /// Current Agent Configurations
+    public let configuration: ConfigurationSnapshot
 
     init(session: LanguageModelSession) {
         self.session = session
         /// assign at `init` in case `history` and `tools` are modified else where.
         self.history = session.transcript.history
-        self.tools = session.properties.tools
+        self.configuration = ConfigurationSnapshot(session: session)
     }
 }

@@ -230,6 +230,7 @@ Similarity means different things per store. The embedding stores use cosine sim
 
 See [`Examples/AgentMemory.swift`](Examples/AgentMemory.swift) for a complete example.
 
+Custom stores can be implemented and used as well by conforming to the `MemoryStore` protocol.
 
 ## Tool Delegation
 

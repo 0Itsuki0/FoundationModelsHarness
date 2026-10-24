@@ -28,7 +28,7 @@ public struct BeforeToolsEventHandler: HookEventHandler {
         /// - `agentState`: Agent state persists across requests. Read/write.
         /// - `invocationState`: Invocation state lives for a single invocation. Read/write.
         /// - `history`: The transcript entries excluding the leading instructions entry, if present, including the last tool calls
-        /// - `tools`: currently registered tools
+        /// - `configuration`: Current Agent Configurations including tools, hooks, plugins, and instruction used.
         public let agent: AgentSnapshot
 
         /// Set to a non-nil value to cancel all tool calls with the value being the result error message. (`JSONValue.null` will cancel the tool call.)
