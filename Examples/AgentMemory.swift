@@ -10,9 +10,8 @@ import FoundationModels
 import FoundationModelsHarness
 import SQLiteStore
 
-private let first = "Which pokemon do i like the most?"
-// Not true! It is just for testing. I only like Pikachu!
-private let second = "It actually changed to ditto!"
+private let first = "Who is responsible for backend?"
+private let second = "Not anymore. It actually changed to Dan."
 
 private func testStream(_ agent: Agent) async {
     await printStream(agent.streamResponse(to: first))
@@ -32,10 +31,6 @@ private let testEntries: [MemoryEntryPartial] = {
         (
             .preferences,
             "The user prefers concise answers without lengthy explanations."
-        ),
-        (
-            .preferences,
-            "The user's favorite pokemon is pikachu."
         ),
         (.preferences, "Do not add third-party dependencies to the project."),
         (
@@ -104,14 +99,9 @@ func agentMemory(stream: Bool = false, ) async {
                 }
             ),
             addMemoryToolConfig: .init(enabled: false),
-            searchMemoryToolConfig: .init(
-                enabled: true,
-                additionalInstruction: .init(
-                    MemoryToolDefault.searchToolSystemInjection()
-                )
-            )
+            searchMemoryToolConfig: .init(enabled: true)
         )
-
+         
         let agent = await Agent(
             tools: [],
             instruction: .init("You are a helpful assistant."),

@@ -118,6 +118,6 @@ extension LanguageModelExtractor {
             description:
                 "Ids of the wrong facts that needs to be removed from assistant's memory."
         )
-        public let remove: [Int]
+        public let remove: [String]
     }
 }

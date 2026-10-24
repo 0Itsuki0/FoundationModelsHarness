@@ -82,7 +82,7 @@ public struct MemorySearchConfiguration: Sendable {
     /// Calculated as `rank(memory) / rank(query itself)`, clamped to 1. The higher it is, the better the match
     ///
     /// When defined, any memory entries with a similarity smaller than the threshold will be excluded.
-    var similarityThreshold: Double?
+    public var similarityThreshold: Double?
 
     /// Limit the search result to top K matches
     public var topK: Int?
@@ -110,8 +110,9 @@ extension MemoryCategory: DatabaseValueConvertible {}
 public struct MemorySearchResult: Codable, FetchableRecord,
     PersistableRecord, Sendable
 {
-
-    public var id: Int
+    /// using `String` here to match the that provided by the SDK for default memory stores
+    /// and to better fit the `LanguageModelExtractor.DefaultExtractionResult`
+    public var id: String
 
     @Guide(
         description: "Categories for long-term memory."

@@ -146,6 +146,91 @@ agent.removePlugin(LoggingPlugin.name)
 Adding a plugin registers its hooks and tools on the agent. Removing it unregisters exactly those hooks and tools. A plugin whose `name` is already registered is ignored.
 
 
+## Long-Term Memory
+
+Long-term memory lets an agent remember facts about the user across conversations. Modeled after the [Strands memory manager](https://strandsagents.com/docs/user-guide/sdk/memory/overview/), it is a plugin built from hooks and tools, added by creating the agent with an `AgentMemoryConfiguration`:
+
+```swift
+let agent = await Agent(
+    instruction: .init("You are a helpful assistant."),
+    memoryConfiguration: config
+)
+```
+
+A configuration has four parts:
+
+| Property | Description |
+|----------|-------------|
+| `store` | The `MemoryStore` that persists memories and answers searches. |
+| `autoExtraction` | Extracts memories from the conversation in the background. Omit it to disable extraction. |
+| `searchMemoryToolConfig` | Adds a `search_user_info` tool so the model can look up memories. |
+| `addMemoryToolConfig` | Adds an `add_llm_memory` tool so the model can save memories itself. We recommend disabling it and using `autoExtraction` instead. |
+
+Each tool's `ToolOption` can override the tool's `name` and `description`. 
+
+### Auto Extraction
+
+The model decides when to call a tool, so it often forgets to save something worth remembering. Auto extraction removes that decision from the model.
+
+After each invocation, the plugin buffers the latest turn. Once `turnBufferCount` turns (5 by default) are buffered, it hands them to the `extractor` in the background, without delaying the response, and passes the outcome to `onExtraction`. Turns still buffered when the plugin is removed are extracted then.
+
+The extractor receives the user prompts, the assistant responses, and the calls to and outputs of the search tool. The search results let it see which stored facts the user has just contradicted, so it can remove them as well as add new ones.
+
+`LanguageModelExtractor` is the built-in extractor. It runs a separate `LanguageModelSession` that reads the turns and returns `GeneratedContent` matching `DefaultExtractionResult`:
+
+- `add`: new facts (`MemoryEntryPartial`) to save.
+- `remove`: ids of stored facts that are no longer true.
+
+Override its `model`, `instruction`, `schema`, or `buildPrompt` to change what is extracted, or implement the `MemoryExtractor` protocol for your own extractor. The extraction result is not written to the store for you: write it in `onExtraction`, in whatever shape your store accepts.
+
+```swift
+let config = AgentMemoryConfiguration(
+    store: store,
+    autoExtraction: .init(
+        extractor: LanguageModelExtractor(),
+        turnBufferCount: 2,
+        onExtraction: { result in
+            guard let content = try? result.get(),
+                let extraction = try? content.value(
+                    LanguageModelExtractor.DefaultExtractionResult.self
+                )
+            else { return }
+            try? await store.addMemories(extraction.add)
+            try? await store.deleteMemories(extraction.remove.map(Int64.init))
+        }
+    ),
+    addMemoryToolConfig: .init(enabled: false),
+    searchMemoryToolConfig: .init(enabled: true)
+)
+```
+
+### Memory Stores
+
+A `MemoryStore` implements `addMemory` and `searchMemory`. Their input types are `Generable` and their result types are `PromptRepresentable`, so each store defines the argument schema and output of the memory tools.
+
+The package provides three stores. Each one deduplicates on add, removes memories unused for `maxUnusedDays` (30 by default), and updates a memory's last-used date when a search returns it.
+
+| Store | Storage | Matching |
+|-------|---------|----------|
+| `InMemoryMemoryStore` | Memory, for testing and debugging | Cosine similarity of `NaturalLanguage` sentence embeddings, plus normalized-text match |
+| `FileMemoryStore` | A JSON file | Same as `InMemoryMemoryStore` |
+| `SQLiteMemoryStore` (`SQLiteStore` target) | An SQLite database, through [GRDB](https://github.com/groue/GRDB.swift) | FTS5 full-text search |
+
+Tune each store with `MemoryStoreConfiguration`:
+
+| Property | Description |
+|----------|-------------|
+| `searchConfiguration` | `similarityThreshold` and `topK` filter search results. With `useSameCategoryFallback`, a search that matches nothing returns every memory in the requested categories. |
+| `addThresholdSimilarity` | A new memory is skipped if an existing one is at least this similar. `nil` always adds. |
+| `removeThresholdSimilarity` | Embedding stores only. Existing memories less similar to a new one than this (nearly opposite) are removed. `nil` never removes. |
+| `maxUnusedDays` | Days before an unused memory is removed. `nil` keeps memories forever. |
+| `eraseDatabaseOnSchemaChange` | `SQLiteMemoryStore` only. Recreates the database when the schema changes. Destroys data, so use it only during development. |
+
+Similarity means different things per store. The embedding stores use cosine similarity, from -1 to 1. `SQLiteMemoryStore` uses an FTS5 score relative to the query's score against itself, from 0 to 1: it measures shared words, so it can't detect opposite facts.
+
+See [`Examples/AgentMemory.swift`](Examples/AgentMemory.swift) for a complete example.
+
+
 ## Tool Delegation
 
 By default, a tool's output is sent back to the model to generate a final response. A delegated tool short-circuits that: its output is returned directly to the user as the final answer.

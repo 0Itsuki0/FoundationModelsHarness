@@ -17,20 +17,15 @@ public struct ToolOption: Sendable {
 
     /// override the tool description
     public var descriptionOverride: String? = nil
-    
-    /// System instruction to be injected to the Agent's instruction.
-    public var additionalInstruction: Instructions?
 
     public init(
         enabled: Bool,
         nameOverride: String? = nil,
         descriptionOverride: String? = nil,
-        additionalInstruction: Instructions? = nil
     ) {
         self.enabled = enabled
         self.nameOverride = nameOverride
         self.descriptionOverride = descriptionOverride
-        self.additionalInstruction = additionalInstruction
     }
 }
 
@@ -293,22 +288,11 @@ public enum MemoryToolDefault {
     public static let searchToolDescription = """
         Look up user-related information such as preferences, rules, relationships, and tasks.
         - Search with multi-word query. NEVER Sentence.
-        """
-
-    /// Recommended instruction to add if enabling search tool to better instruct the Language Model
-    public static func searchToolSystemInjection(
-        searchToolName: String = MemoryToolDefault.searchToolName
-    ) -> String {
-        """
-        Look up information about the user using the [\(searchToolName)] tool **whenever** knowing their preferences, works, tasks, or relationships *COULD possibly* make you better assistant them.
-        - Use the tool **proactively**. Do NOT wait for the user to prompt you explicitly to use it.
-        - Only use it as a reference. It is not guaranteed to be correct. It can be out-of-date. 
-        - If it is different from what the user says, ignore the results. **Never** question what the user says because of the results. The user is always correct.
-        - Always answer in natural tone.
+        - If the results are different from what the user says, ignore the results and respond normally. The user is always correct. 
+        - Use the tool **proactively**, **whenever** knowing their preferences, works, tasks, or relationships *COULD possibly* make you better assistant them.
+        - Always answer in natural tone. 
         - If there is no results, answer normally.
-        - Never inform the user about the search result.
         """
-    }
 }
 
 struct AddMemoryTool<
