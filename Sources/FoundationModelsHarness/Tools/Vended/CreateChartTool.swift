@@ -9,234 +9,142 @@ import Charts
 import FoundationModels
 import SwiftUI
 
+/// CreateChartTool: A tool to create chart (plots) from either discrete data points, or from csv files.
+///
+/// Specifically, this tool can be used for visualizing *unknown* data user provides in two ways.
+/// - create and save chart images to `outputDirectory`
+/// - display SwiftUI Charts by specifying `onChartGenerated`
 public struct CreateChartTool: Tool {
     public let name: String = "create_chart"
     public let description: String =
-        "Create chart from either discrete data or csv file."
+        "Create a chart from discrete data points or csv file that can contain multiple plots."
 
-    // TODO: - (1) add style configuration for each plot type
-    // https://levelup.gitconnected.com/swift-charts-master-marks-and-charts-styling-13ac23302c16
-    // Line: .interpolationMethod(.catmullRom), .lineStyle(by: .value("", data.category.rawValue))
-    // point: .symbolSize(by: .value("", data.category.rawValue)),foregroundStyle, .symbol
-    // TODO: - (2) add other plot type: pie, bar(direction: BarDirection), area
-    @Generable()
-    public enum PlotType: Sendable {
-        case line
-        case point
-    }
-
-    @Generable()
-    public enum BarDirection: Sendable {
-        case horizontal
-        case vertical
-    }
-
-    public struct ChartStyleConfiguration: Sendable {
-
-    }
-    public
-        struct RangeValueData: Sendable
-    {
-
-    }
-
-    @Generable(description: "A data point on the chart")
-    public struct SingleValueData: Identifiable, Sendable {
-        public let id = UUID()
-
-        @Guide(description: "x value of the data point.")
-        public var x: String
-
-        @Guide(description: "y value of the data point.")
-        public var y: String
-
-    }
-
-    @Generable()
-    public enum DataSource: Sendable {
-        case discrete(DiscreteDataSource)
-        case file(FileDataSource)
-
-        public var discreteData: DiscreteDataSource {
-            get throws {
-                switch self {
-                case .discrete(let source):
-                    return source
-                case .file(let source):
-                    let dataFrame = try CSVProcessor.load(
-                        source.csvPath,
-                        columns: [source.xColName, source.yColName]
-                    )
-                    let data = try CSVProcessor.getDataPoints(
-                        dataFrame: dataFrame,
-                        xCol: source.xColName,
-                        yCol: source.yColName
-                    )
-                    return data
-                }
-            }
-        }
-    }
-
-    @Generable()
-    public struct DiscreteDataSource: Sendable {
-        @Guide(description: "Data points to create the chart from.")
-        public var dataPoints: [SingleValueData]
-
-        @Guide(description: "x-axis data type.")
-        public var xAxisDataType: DataValueType
-
-        @Guide(description: "y-axis data type.")
-        public var yAxisDataType: DataValueType
-    }
-
-    @Generable(description: "Data from a csv file.")
-    public struct FileDataSource: Sendable {
-        @Guide(description: "Path to the data source csv file.")
-        public var csvPath: String
-
-        @Guide(
-            description:
-                "The column to be used as x value. The **exact** name as it shows up in the file."
-        )
-        public var xColName: String
-
-        @Guide(
-            description:
-                "The column to be used as y value. The **exact** name as it shows up in the file."
-        )
-        public var yColName: String
-    }
-
-    @Generable()
-    public enum DataValueType: Sendable {
-        case string
-        case number
-        case isoDate
-
-        public init(_ type: any Any.Type, sampleValue: String?) {
-            if type is Int.Type {
-                self = .number
-                return
-            }
-            if type is String.Type {
-                if let sampleValue,
-                    (try? Date(sampleValue, strategy: .iso8601)) != nil
-                {
-                    self = .isoDate
-                } else {
-                    self = .string
-                }
-                return
-            }
-            if type is Double.Type {
-                self = .number
-                return
-            }
-
-            self = .string
-        }
-    }
-
-    @Generable(description: "A plot on a chart.")
-    public struct ChartPlot: Sendable {
-        @Guide(description: "plot type.")
-        public var type: PlotType
-
-        @Guide(
-            description: """
-                Data source, either discrete data points with `DiscreteDataSource`, or csv file with `FileDataSource`. 
-                - Do NOT make up data. 
-                - If user wants a chart from a path, then they want a chart using the data from the that file. Not asking you to make that path itself a data point.
-                """
-        )
-        public var data: DataSource
-    }
-
-    private struct ResolvedPlot: Sendable {
-        var type: PlotType
-        var dataPoints: [SingleValueData]
-        var xAxisDataType: DataValueType
-        var yAxisDataType: DataValueType
-
-        init(_ chartPlot: ChartPlot) throws {
-            self.type = chartPlot.type
-            let dataSource = try chartPlot.data.discreteData
-            self.dataPoints = dataSource.dataPoints
-            self.xAxisDataType = dataSource.xAxisDataType
-            self.yAxisDataType = dataSource.yAxisDataType
-        }
-    }
+    private let outputOption: CreateChartTool.OutputOption
 
     // MARK: - protocol implementation
-    @Generable(
-        description:
-            "The chart to create that can contain multiple plots stacking on top of each other"
-    )
-    public struct ChartInput: Sendable {
-        @Guide(
-            description:
-                "The plots in the chart stacking on top of each other. The ones come later will be at top.",
-            .minimumCount(1)
+    public typealias Arguments = CreateChartTool.ToolInput
+    public typealias Output = CreateChartTool.ToolOutput
+
+    public func call(arguments: Arguments) async throws -> Output {
+        return try await ChartRequestProcessor.call(
+            arguments: arguments,
+            outputOption: outputOption
         )
-        public var plots: [ChartPlot]
+    }
+}
+
+extension CreateChartTool {
+    /// Create a `CreateChartTool` where the chart will be saved as an image in the specified directory
+    public init(outputDirectory: URL) {
+        self.outputOption = .image(
+            outputDirectory: outputDirectory
+        )
     }
 
-    public enum Output: PromptRepresentable {
-
-        case success(
-            image: Attachment<ImageAttachmentContent>,
-            destination: String?
-        )
-        case failure(String)
-
-        public var promptRepresentation: Prompt {
-            switch self {
-            case .success(let attachment, let path):
-                return Prompt {
-                    attachment.promptRepresentation
-                    if let path {
-                        "saved to \(path)"
-                    }
-                }
-            case .failure(let string):
-                return Prompt("Error creating chart: \(string)")
-            }
-        }
+    /// Create a `CreateChartTool` where the chart will be used for dynamic SwiftUI Display.
+    /// ex:
+    /// ```
+    /// // SwiftUI View
+    /// @State private var chartContent: AnyChartContent?
+    /// if let chartContent {
+    ///     Chart { chartContent }
+    /// }
+    ///
+    /// // Tool creation
+    /// let tool = CreateChartTool(onChartGenerated: { chart in
+    ///     Task { @MainActor [chart] in chartContent = chart }
+    /// })
+    /// ```
+    public init(
+        onChartGenerated: @escaping @Sendable (AnyChartContent) -> Void
+    ) {
+        self.outputOption = .swiftUIView(onChartGenerated: onChartGenerated)
     }
 
-    public func call(arguments: ChartInput) async throws -> Output {
-        print(#function, arguments)
+    /// Create a `CreateChartTool` where the chart will be saved as an image, as well as used for dynamic SwiftUI Display.
+    public init(
+        outputDirectory: URL,
+        onChartGenerated: @escaping @Sendable (AnyChartContent) -> Void
+    ) {
+        self.outputOption = .both(
+            outputDirectory: outputDirectory,
+            onChartGenerated: onChartGenerated
+        )
+    }
+}
+
+extension CGImage {
+    var pngData: Data? {
+        let rep = NSBitmapImageRep(cgImage: self)
+        return rep.representation(using: .png, properties: [:])
+    }
+}
+
+enum ChartRequestProcessor {
+
+    static func call(
+        arguments: CreateChartTool.ToolInput,
+        outputOption: CreateChartTool.OutputOption
+    ) async throws
+        -> CreateChartTool.Output
+    {
+        let plots: [CreateChartTool.ResolvedPlot]
         do {
-            guard
-                let image = try await Self.getChartImage(arguments.plots)
-            else {
-                return .failure("Fail to get image data from chart.")
-            }
-
-            let destination = self.resolveDestination()
-
-            if let data = image.pngData,
-                (try? data.write(to: destination)) != nil
-            {
-                return .success(
-                    image: .init(image),
-                    destination: destination.path()
-                )
-            }
-
-            return .success(image: .init(image), destination: nil)
+            plots = try arguments.plots.map(
+                CreateChartTool.ResolvedPlot.init
+            )
         } catch {
-            return .failure(error.localizedDescription)
+            return .failure(
+                "Error resolving plot's data source: \(error.localizedDescription)"
+            )
+        }
+
+        let chartContent = self.chartContent(plots)
+
+        if let onChartGenerated = outputOption.onChartGenerated {
+            onChartGenerated(AnyChartContent(chartContent))
+        }
+
+        /// `ChartContent` has to be converted to `AnyChartContent` so that it can become sendable
+        guard
+            let image = await self.imageForChart(AnyChartContent(chartContent))
+        else {
+            return .failure("Fail to get image from chart.")
+        }
+
+        let (destination, error) = saveImage(
+            image,
+            directory: outputOption.outputDirectory
+        )
+
+        if let error { return .failure(error) }
+
+        return .success(image: .init(image), destination: destination?.path())
+    }
+
+    private static func saveImage(_ image: CGImage, directory: URL?)
+        -> (destination: URL?, error: String?)
+    {
+        guard let directory else { return (nil, nil) }
+        guard let data = image.pngData else {
+            return (nil, "Fail to get image data.")
+        }
+        let destination = self.resolveDestination(directory: directory)
+
+        do {
+            try data.write(to: destination)
+            return (destination, nil)
+        } catch {
+            return (nil, "Fail to save image: \(error.localizedDescription)")
         }
     }
 
-    private func fileExist(_ url: URL) -> Bool {
+    private static func fileExist(_ url: URL) -> Bool {
         return FileManager.default.fileExists(atPath: url.path())
     }
 
-    private func resolveDestination() -> URL {
-        var destination = URL.temporaryDirectory.appending(
+    private static func resolveDestination(directory: URL) -> URL {
+        var destination = directory.appending(
             path: "\(Int(Date().timeIntervalSince1970)).png"
         )
         var loopCount = 1
@@ -252,43 +160,36 @@ public struct CreateChartTool: Tool {
     }
 
     @MainActor
-    private static func getChartImage(
-        _ plots: [ChartPlot]
-    ) throws
-        -> CGImage?
-    {
-        let plots: [ResolvedPlot] = try plots.map(ResolvedPlot.init)
-        let view = createChart(plots)
-        let renderer = ImageRenderer(content: view)
+    private static func imageForChart<C: ChartContent>(
+        _ content: C
+    ) -> CGImage? {
+        let chart = self.createChart(content)
+        let renderer = ImageRenderer(content: chart)
         renderer.scale = 1
         return renderer.cgImage
     }
 
+    static func loadDataFromCSV(
+        _ source: CreateChartTool.FileDataSource
+    ) throws -> CreateChartTool.DiscreteDataSource {
+        let dataFrame = try CSVProcessor.load(
+            source.csvPath,
+            columns: [source.xColName, source.yColName]
+        )
+        let data = try CSVProcessor.getDataPoints(
+            dataFrame: dataFrame,
+            xCol: source.xColName,
+            yCol: source.yColName
+        )
+        return data
+    }
+
     @ContentBuilder
-    private static func createChart(
-        _ plots: [ResolvedPlot]
+    private static func createChart<C: ChartContent>(
+        _ content: C
     ) -> some View {
         Chart {
-            ForEach(plots.enumerated(), id: \.offset) { _, plot in
-                ForEach(plot.dataPoints) { item in
-                    switch plot.type {
-                    case .line:
-                        lineMark(
-                            item,
-                            xType: plot.xAxisDataType,
-                            yType: plot.yAxisDataType
-                        )
-                        .foregroundStyle(.primary)
-                        .interpolationMethod(.catmullRom)
-                    case .point:
-                        pointMark(
-                            item,
-                            xType: plot.xAxisDataType,
-                            yType: plot.yAxisDataType
-                        )
-                    }
-                }
-            }
+            content
         }
         .chartYAxis(content: {
             AxisMarks {
@@ -308,10 +209,36 @@ public struct CreateChartTool: Tool {
     }
 
     @ChartContentBuilder
+    private static func chartContent(
+        _ plots: [CreateChartTool.ResolvedPlot]
+    ) -> some ChartContent {
+        ForEach(plots.enumerated(), id: \.offset) { _, plot in
+            ForEach(plot.dataPoints) { item in
+                switch plot.type {
+                case .line:
+                    lineMark(
+                        item,
+                        xType: plot.xAxisDataType,
+                        yType: plot.yAxisDataType
+                    )
+                    .foregroundStyle(.primary)
+                    .interpolationMethod(.catmullRom)
+                case .point:
+                    pointMark(
+                        item,
+                        xType: plot.xAxisDataType,
+                        yType: plot.yAxisDataType
+                    )
+                }
+            }
+        }
+    }
+
+    @ChartContentBuilder
     private static func lineMark(
-        _ item: SingleValueData,
-        xType: DataValueType,
-        yType: DataValueType
+        _ item: CreateChartTool.SingleValueData,
+        xType: CreateChartTool.DataValueType,
+        yType: CreateChartTool.DataValueType
     ) -> some ChartContent {
         let formatter = ISO8601DateFormatter()
 
@@ -410,9 +337,9 @@ public struct CreateChartTool: Tool {
 
     @ChartContentBuilder
     private static func pointMark(
-        _ item: SingleValueData,
-        xType: DataValueType,
-        yType: DataValueType
+        _ item: CreateChartTool.SingleValueData,
+        xType: CreateChartTool.DataValueType,
+        yType: CreateChartTool.DataValueType
     ) -> some ChartContent {
         let formatter = ISO8601DateFormatter()
 
@@ -507,12 +434,5 @@ public struct CreateChartTool: Tool {
                 fallback
             }
         }
-    }
-}
-
-extension CGImage {
-    var pngData: Data? {
-        let rep = NSBitmapImageRep(cgImage: self)
-        return rep.representation(using: .png, properties: [:])
     }
 }

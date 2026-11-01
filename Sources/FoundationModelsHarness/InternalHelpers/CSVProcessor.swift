@@ -14,8 +14,8 @@ enum CSVProcessor {
 
         var errorDescription: String? {
             switch self {
-            case .colNotExist:
-                "Some columns specified does not exist."
+            case .colNotExist(let cols):
+                "Columns [\(cols.joined(separator: ", "))] does not exist."
             }
         }
     }
