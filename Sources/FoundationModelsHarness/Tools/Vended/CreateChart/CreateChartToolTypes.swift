@@ -9,7 +9,56 @@ import Charts
 import Foundation
 import FoundationModels
 
+// TODO: - add custom string convertible to types
 extension CreateChartTool {
+    // MARK: - protocol conformation types
+    @Generable(
+        description: """
+            The chart to create that can contain multiple plots stacking on top of each other.
+            Chart and Plot are NOT the same.
+            One Chart contains one or more plots.
+            """
+    )
+    public struct ToolInput: Sendable {
+        @Guide(
+            description: """
+                The plots in the chart stacking on top of each other. 
+                The ones come later will be at top. 
+                **ALL** plots belong to the same chart.
+                """,
+            .minimumCount(1)
+        )
+        public var plots: [ChartPlot]
+    }
+
+    public enum ToolOutput: PromptRepresentable {
+        case success(
+            image: Attachment<ImageAttachmentContent>?,
+            destination: String?
+        )
+        case failure(String)
+
+        public var promptRepresentation: Prompt {
+            switch self {
+            case .success(let attachment, let path):
+                return Prompt {
+                    if let attachment {
+                        attachment.promptRepresentation
+                    }
+                    if let path {
+                        "saved to \(path)"
+                    }
+                    if path == nil, attachment == nil {
+                        "Chart created successfully."
+                    }
+                }
+            case .failure(let string):
+                return Prompt("Error creating chart: \(string)")
+            }
+        }
+    }
+
+    // MARK: - helper types
     public enum OutputOption: Sendable {
         case image(outputDirectory: URL)
         case swiftUIView(onChartGenerated: @Sendable (AnyChartContent) -> Void)
@@ -40,35 +89,6 @@ extension CreateChartTool {
             }
         }
     }
-
-    public enum ToolOutput: PromptRepresentable {
-        case success(
-            image: Attachment<ImageAttachmentContent>?,
-            destination: String?
-        )
-        case failure(String)
-
-        public var promptRepresentation: Prompt {
-            switch self {
-            case .success(let attachment, let path):
-                return Prompt {
-                    if let attachment {
-                        attachment.promptRepresentation
-                    }
-                    if let path {
-                        "saved to \(path)"
-                    }
-                    if path == nil, attachment == nil {
-                        "Chart created successfully."
-                    }
-                }
-            case .failure(let string):
-                return Prompt("Error creating chart: \(string)")
-            }
-        }
-    }
-
-    typealias ViewOutput = String
 
     // TODO: - (1) add style configuration for each plot type
     // https://levelup.gitconnected.com/swift-charts-master-marks-and-charts-styling-13ac23302c16
@@ -198,25 +218,6 @@ extension CreateChartTool {
                 """
         )
         public var data: DataSource
-    }
-
-    @Generable(
-        description: """
-            The chart to create that can contain multiple plots stacking on top of each other.
-            Chart and Plot are NOT the same.
-            One Chart contains one or more plots.
-            """
-    )
-    public struct ToolInput: Sendable {
-        @Guide(
-            description: """
-                The plots in the chart stacking on top of each other. 
-                The ones come later will be at top. 
-                **ALL** plots belong to the same chart.
-                """,
-            .minimumCount(1)
-        )
-        public var plots: [ChartPlot]
     }
 
     struct ResolvedPlot: Sendable {
