@@ -297,3 +297,20 @@ If the delegated tool throws, the error is penetrated directly to the `AgentResu
         const agent = new Agent({ model: router })
         ```
     - https://strandsagents.com/docs/api/typescript/FallbackStrategy/
+
+
+File Editing
+- plain text: strands-ts/src/vended-tools/file-editor/index.ts
+- bytes (how claude makes images / pdfs): write code, usually Python, and run it with a code-execution or shell tool. examples: 
+    - Make a PNG chart: matplotlib → plt.savefig("out.png")
+    - Draw or make an image: Pillow → Image.new(...), ImageDraw.rectangle/text/line(...), img.save("out.png")  
+    - Edit an image: Pillow / numpy → Image.open(), crop, resize, paste, filter, save()
+    - Make a PDF: reportlab, or HTML → PDF with a converter
+    - Edit or merge a PDF:pypdf / pdfplumber
+
+
+Workflow: 
+- swift temporal
+    - https://github.com/apple/swift-temporal-sdk#%EF%B8%8F-use-cases
+    - API Doc: https://swiftpackageindex.com/apple/swift-temporal-sdk/main/documentation/temporal
+    - examples: https://github.com/apple/swift-temporal-sdk/tree/main/Examples
