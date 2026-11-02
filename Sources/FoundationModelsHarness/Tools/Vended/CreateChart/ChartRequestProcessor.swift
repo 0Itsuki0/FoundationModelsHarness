@@ -143,7 +143,7 @@ enum ChartRequestProcessor {
             ForEach(plot.dataPoints) { item in
                 switch plot.type {
                 case .line:
-                    lineMark(
+                    ChartMarkBuilder.lineMark(
                         item,
                         xType: plot.xAxisDataType,
                         yType: plot.yAxisDataType
@@ -151,214 +151,18 @@ enum ChartRequestProcessor {
                     .foregroundStyle(.primary)
                     .interpolationMethod(.catmullRom)
                 case .point:
-                    pointMark(
+                    ChartMarkBuilder.pointMark(
+                        item,
+                        xType: plot.xAxisDataType,
+                        yType: plot.yAxisDataType
+                    )
+                case .pie:
+                    ChartMarkBuilder.sectorMark(
                         item,
                         xType: plot.xAxisDataType,
                         yType: plot.yAxisDataType
                     )
                 }
-            }
-        }
-    }
-
-    @ChartContentBuilder
-    private static func lineMark(
-        _ item: CreateChartTool.SingleValueData,
-        xType: CreateChartTool.DataValueType,
-        yType: CreateChartTool.DataValueType
-    ) -> some ChartContent {
-        let formatter = ISO8601DateFormatter()
-
-        let fallback = LineMark(
-            x: .value("", item.x),
-            y: .value("", item.y)
-        )
-
-        switch (xType, yType) {
-        case (.string, .string):
-            fallback
-        case (.string, .number):
-            if let number = Float(item.y) {
-                LineMark(
-                    x: .value("", item.x),
-                    y: .value("", number)
-                )
-            } else {
-                fallback
-            }
-        case (.string, .isoDate):
-            if let date = formatter.date(from: item.y) {
-                LineMark(
-                    x: .value("", item.x),
-                    y: .value("", date)
-                )
-            } else {
-                fallback
-            }
-        case (.number, .string):
-            if let number = Float(item.x) {
-                LineMark(
-                    x: .value("", number),
-                    y: .value("", item.y)
-                )
-            } else {
-                fallback
-            }
-        case (.number, .number):
-            if let x = Float(item.x), let y = Float(item.y) {
-                LineMark(
-                    x: .value("", x),
-                    y: .value("", y)
-                )
-            } else {
-                fallback
-            }
-
-        case (.number, .isoDate):
-            if let x = Float(item.x),
-                let y = formatter.date(from: item.y)
-            {
-                LineMark(
-                    x: .value("", x),
-                    y: .value("", y)
-                )
-            } else {
-                fallback
-            }
-
-        case (.isoDate, .string):
-            if let number = formatter.date(from: item.x) {
-                LineMark(
-                    x: .value("", number),
-                    y: .value("", item.y)
-                )
-            } else {
-                fallback
-            }
-
-        case (.isoDate, .number):
-            if let x = formatter.date(from: item.x),
-                let y = Float(item.y)
-            {
-                LineMark(
-                    x: .value("", x),
-                    y: .value("", y)
-                )
-            } else {
-                fallback
-            }
-
-        case (.isoDate, .isoDate):
-            if let x = formatter.date(from: item.x),
-                let y = formatter.date(from: item.y)
-            {
-                LineMark(
-                    x: .value("", x),
-                    y: .value("", y)
-                )
-            } else {
-                fallback
-            }
-        }
-    }
-
-    @ChartContentBuilder
-    private static func pointMark(
-        _ item: CreateChartTool.SingleValueData,
-        xType: CreateChartTool.DataValueType,
-        yType: CreateChartTool.DataValueType
-    ) -> some ChartContent {
-        let formatter = ISO8601DateFormatter()
-
-        let fallback = PointMark(
-            x: .value("", item.x),
-            y: .value("", item.y)
-        )
-
-        switch (xType, yType) {
-        case (.string, .string):
-            fallback
-        case (.string, .number):
-            if let number = Float(item.y) {
-                PointMark(
-                    x: .value("", item.x),
-                    y: .value("", number)
-                )
-            } else {
-                fallback
-            }
-        case (.string, .isoDate):
-            if let date = formatter.date(from: item.y) {
-                PointMark(
-                    x: .value("", item.x),
-                    y: .value("", date)
-                )
-            } else {
-                fallback
-            }
-        case (.number, .string):
-            if let number = Float(item.x) {
-                PointMark(
-                    x: .value("", number),
-                    y: .value("", item.y)
-                )
-            } else {
-                fallback
-            }
-        case (.number, .number):
-            if let x = Float(item.x), let y = Float(item.y) {
-                PointMark(
-                    x: .value("", x),
-                    y: .value("", y)
-                )
-            } else {
-                fallback
-            }
-
-        case (.number, .isoDate):
-            if let x = Float(item.x),
-                let y = formatter.date(from: item.y)
-            {
-                PointMark(
-                    x: .value("", x),
-                    y: .value("", y)
-                )
-            } else {
-                fallback
-            }
-
-        case (.isoDate, .string):
-            if let number = formatter.date(from: item.x) {
-                PointMark(
-                    x: .value("", number),
-                    y: .value("", item.y)
-                )
-            } else {
-                fallback
-            }
-
-        case (.isoDate, .number):
-            if let x = formatter.date(from: item.x),
-                let y = Float(item.y)
-            {
-                PointMark(
-                    x: .value("", x),
-                    y: .value("", y)
-                )
-            } else {
-                fallback
-            }
-
-        case (.isoDate, .isoDate):
-            if let x = formatter.date(from: item.x),
-                let y = formatter.date(from: item.y)
-            {
-                PointMark(
-                    x: .value("", x),
-                    y: .value("", y)
-                )
-            } else {
-                fallback
             }
         }
     }

@@ -9,7 +9,7 @@ import Foundation
 import FoundationModelsHarness
 
 let chartPrompt = """
-    Create a line chart and a point chart for the following data.
+    Create a pie chart for the following data.
     - category: "A", value: 5
     - category: "B", value: 9
     - category: "C", value: 7
@@ -21,7 +21,7 @@ private func testStream(_ agent: Agent, prompt: String) async {
 }
 
 private func testRespond(_ agent: Agent, prompt: String) async {
-    let response = await agent.respond(to: prompt)
+    let _ = await agent.respond(to: prompt)
     printHistory(agent.history)
 }
 

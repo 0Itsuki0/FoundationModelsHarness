@@ -9,7 +9,6 @@ import Charts
 import Foundation
 import FoundationModels
 
-// TODO: - add custom string convertible to types
 extension CreateChartTool {
     // MARK: - protocol conformation types
     @Generable(
@@ -94,11 +93,13 @@ extension CreateChartTool {
     // https://levelup.gitconnected.com/swift-charts-master-marks-and-charts-styling-13ac23302c16
     // Line: .interpolationMethod(.catmullRom), .lineStyle(by: .value("", data.category.rawValue))
     // point: .symbolSize(by: .value("", data.category.rawValue)),foregroundStyle, .symbol
-    // TODO: - (2) add other plot type: pie, bar(direction: BarDirection), area
+    // TODO: - (2) add other plot type: bar(direction: BarDirection), area
     @Generable(description: "Plot type")
     public enum PlotType: Sendable {
         case line
         case point
+        /// for pie (sector), the x value will be used as the foreground style, and the y value will be the angle
+        case pie
     }
 
     @Generable()
